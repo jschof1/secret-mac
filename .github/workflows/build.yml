@@ -1,0 +1,27 @@
+name: Build Mac app
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Test helper
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Build app
+        run: bash scripts/build.sh
+      - name: Package app
+        run: ditto -c -k --sequesterRsrc --keepParent build/Secret.app build/Secret.zip
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: secret-mac-arm64
+          path: build/Secret.zip
+          retention-days: 7
+          if-no-files-found: error
