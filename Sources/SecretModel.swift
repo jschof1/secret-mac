@@ -148,7 +148,8 @@ final class SecretModel: ObservableObject {
     func hide() { revealGeneration += 1; revealed = nil }
 
     func save(_ session: EditSession, name: String, value: String) async throws {
-        _ = try await helper.run([session.existingName == nil ? "--add" : "--set", name, "--expected", session.revision], input: value)
+        let command = session.existingName == nil ? "--add=" : "--set="
+        _ = try await helper.run([command + name, "--expected", session.revision], input: value)
         editor = nil
         await reload()
         if session.existingName == nil { query = name }

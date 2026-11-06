@@ -1,6 +1,4 @@
 #!/usr/bin/python3
-"""Draw the app icon without dependencies."""
-
 import math
 from pathlib import Path
 import struct

@@ -48,7 +48,10 @@ struct HelperClient: Sendable {
     }
 
     func run(_ arguments: [String], input: String? = nil) async throws -> Data {
-        try await Task.detached(priority: .userInitiated) {
+        if let input, input.utf8.count > 65_536 {
+            throw HelperFailure(message: "Use a value of 64 KB or less.")
+        }
+        return try await Task.detached(priority: .userInitiated) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: path)
             process.arguments = arguments
@@ -77,11 +80,18 @@ struct HelperClient: Sendable {
                 stderr.collect(errors.fileHandleForReading, limit: 4096, process: process)
                 drains.leave()
             }
-            if let input { incoming.fileHandleForWriting.write(Data(input.utf8)) }
+            var inputFailed = false
+            if let input {
+                do { try incoming.fileHandleForWriting.write(contentsOf: Data(input.utf8)) }
+                catch {
+                    inputFailed = true
+                    if process.isRunning { process.terminate() }
+                }
+            }
             try? incoming.fileHandleForWriting.close()
             process.waitUntilExit()
             drains.wait()
-            guard process.terminationStatus == 0, !stdout.failed, !stderr.failed else {
+            guard process.terminationStatus == 0, !stdout.failed, !stderr.failed, !inputFailed else {
                 let message = String(data: stderr.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let message, message.hasPrefix("secret: ") { throw HelperFailure(message: String(message.dropFirst(8))) }
                 throw HelperFailure(message: "The secret helper did not finish. Try again.")

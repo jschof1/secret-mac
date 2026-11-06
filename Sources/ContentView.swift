@@ -84,7 +84,12 @@ struct ContentView: View {
         }
         .task { await model.reload(); searchFocused = true }
         .onChange(of: model.focusSearch) { _, _ in searchFocused = true }
-        .onChange(of: model.query) { _, _ in model.hide() }
+        .onChange(of: model.query) { _, _ in
+            model.hide()
+            if let selected = model.selected, !model.filtered.contains(selected) {
+                model.selected = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in model.hide() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if model.editor == nil { Task { await model.reload() } }
@@ -128,7 +133,6 @@ struct ContentView: View {
                 Text(revealed.value)
                     .font(.system(size: 12, design: .monospaced))
                     .lineLimit(4)
-                    .textSelection(.enabled)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .privacySensitive()

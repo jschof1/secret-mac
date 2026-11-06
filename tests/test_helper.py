@@ -65,6 +65,26 @@ class HelperTests(unittest.TestCase):
         self.run_helper("FIRST|SECOND", success=False)
         self.run_helper(".*", success=False)
 
+    def test_double_quoted_literal_escapes_match_shell(self):
+        cases = [r'"a\$b"', r'"a\`b"', r'"a\"b"', r'"a\\b"', r'"a\qb"']
+        for raw in cases:
+            self.write(("FIRST=" + raw + "\n").encode("utf-8"))
+            shell = subprocess.run(["/bin/bash", "-c", '. "$1"; printf "%s" "$FIRST"', "fixture", str(self.envfile)], env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=True)
+            self.assertEqual(self.run_helper("FIRST").stdout, shell.stdout)
+
+    def test_check_does_not_change_file_or_print_values(self):
+        original = self.envfile.read_bytes()
+        self.assertEqual(self.run_helper("--check").stdout, b"OK\n")
+        self.assertEqual(self.envfile.read_bytes(), original)
+        self.assertFalse(self.backups.exists())
+        self.write(b"FIRST=$(false)\n")
+        result = self.run_helper("--check", success=False)
+        self.assertNotIn(b"$(false)", result.stderr)
+
+    def test_option_like_name_has_a_name_validation_error(self):
+        result = self.run_helper("--add=-NAME", "--expected", self.revision(), value="value", success=False)
+        self.assertIn(b"uppercase letters", result.stderr)
+
     def test_maximum_value_inspect_is_complete(self):
         value = "x" * backend.MAX_VALUE_BYTES
         self.save("LARGE", value)

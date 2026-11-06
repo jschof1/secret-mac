@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 @MainActor
@@ -35,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct SecretApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = SecretModel()
+
+    init() { signal(SIGPIPE, SIG_IGN) }
 
     var body: some Scene {
         Window("Secret", id: "secret") {
