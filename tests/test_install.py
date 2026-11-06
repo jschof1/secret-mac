@@ -10,7 +10,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE_HELPER = os.environ.get("SECRET_TEST_HELPER")
-HELPER = Path(NATIVE_HELPER or "/usr/bin/true")
+BUNDLED_HELPER = ROOT / "build/Secret.app/Contents/Helpers/secret"
+HELPER = Path(NATIVE_HELPER) if NATIVE_HELPER else BUNDLED_HELPER if BUNDLED_HELPER.exists() else Path("/usr/bin/true")
 
 
 @unittest.skipUnless(sys.platform == "darwin", "native installer test requires macOS")
@@ -50,7 +51,7 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
             result = subprocess.run([str(home / ".local/bin/secret"), "FIRST"], env=environment, capture_output=True)
             self.assertEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, b"one" if NATIVE_HELPER else b"")
+            self.assertEqual(result.stdout, b"" if HELPER == Path("/usr/bin/true") else b"one")
             repeat = subprocess.run(["/bin/bash", str(ROOT / "scripts/install.sh"), "--skip-build"], env=environment, capture_output=True)
             self.assertEqual(repeat.returncode, 0, repeat.stderr.decode("utf-8"))
             self.assertEqual(len(list((home / "Library/Application Support/Secret/Backups").glob("Secret-*.app"))), 1)
