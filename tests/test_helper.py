@@ -14,6 +14,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "helper/secret"
+NATIVE_HELPER = os.environ.get("SECRET_TEST_HELPER")
+HELPER_COMMAND = [NATIVE_HELPER] if NATIVE_HELPER else [sys.executable, str(HELPER)]
 loader = importlib.machinery.SourceFileLoader("secret_backend", str(HELPER))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 backend = importlib.util.module_from_spec(spec)
@@ -38,7 +40,7 @@ class HelperTests(unittest.TestCase):
         self.envfile.chmod(0o600)
 
     def run_helper(self, *arguments, value=None, success=True):
-        result = subprocess.run([sys.executable, str(HELPER)] + list(arguments), input=None if value is None else value.encode("utf-8"), capture_output=True, env=self.environment)
+        result = subprocess.run(HELPER_COMMAND + list(arguments), input=None if value is None else value.encode("utf-8"), capture_output=True, env=self.environment)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
         else:
@@ -90,6 +92,87 @@ class HelperTests(unittest.TestCase):
         self.save("LARGE", value)
         self.assertEqual(self.run_helper("LARGE").stdout.decode("ascii"), value)
         self.assertEqual(json.loads(self.run_helper("--inspect", "LARGE").stdout)["value"], value)
+
+    def test_invalid_utf8_never_gets_replaced_or_echoed(self):
+        original = b"FIRST=\xff\xfe\n"
+        self.write(original)
+        result = self.run_helper("--list", success=False)
+        self.assertNotIn(b"\xff", result.stderr)
+        self.save("NEW", "new", success=False)
+        self.assertEqual(self.envfile.read_bytes(), original)
+
+    def test_invalid_utf8_input_is_rejected(self):
+        before = self.envfile.read_bytes()
+        result = subprocess.run(HELPER_COMMAND + ["--add", "NEW", "--expected", self.revision()], input=b"\xff", capture_output=True, env=self.environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(b"\xff", result.stderr)
+        self.assertEqual(self.envfile.read_bytes(), before)
+
+    def test_file_size_limit_preserves_original(self):
+        original = b"#" + b"x" * backend.MAX_FILE_BYTES
+        self.write(original)
+        self.run_helper("--list", success=False)
+        self.assertEqual(self.envfile.read_bytes(), original)
+
+    def test_unicode_bytes_in_unrelated_lines_are_preserved(self):
+        original = "# café e\u0301\nFIRST=one\nOTHER='世界'\n".encode("utf-8")
+        self.write(original)
+        self.save("FIRST", "new", adding=False)
+        self.assertEqual(self.envfile.read_bytes(), original.replace(b"FIRST=one", b"FIRST=new"))
+
+    def test_backup_directory_symlink_is_refused(self):
+        target = self.root / "elsewhere"
+        target.mkdir()
+        self.backups.symlink_to(target)
+        before = self.envfile.read_bytes()
+        self.save("NEW", "new", success=False)
+        self.assertEqual(self.envfile.read_bytes(), before)
+        self.assertEqual(list(target.iterdir()), [])
+
+    def test_lock_symlink_is_refused(self):
+        target = self.root / "untouched"
+        target.write_bytes(b"keep")
+        Path(str(self.envfile) + ".secret.lock").symlink_to(target)
+        before = self.envfile.read_bytes()
+        self.save("NEW", "new", success=False)
+        self.assertEqual(self.envfile.read_bytes(), before)
+        self.assertEqual(target.read_bytes(), b"keep")
+
+    def test_aliases_and_legacy_export_with_fixture_only(self):
+        self.assertEqual(self.run_helper("-l").stdout, self.run_helper("--list").stdout)
+        self.assertEqual(json.loads(self.run_helper("-j").stdout), ["FIRST", "SECOND"])
+        exported = self.run_helper("-e").stdout
+        self.assertIn(b"FIRST=one\n", exported)
+        self.assertIn(b"SECOND=two=three\n", exported)
+        self.assertNotIn(b"--expected", self.run_helper("--help").stderr)
+
+    @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
+    def test_native_matches_reference_literal_reads_and_revision(self):
+        self.write(b"# fixture\nFIRST='one'\nSECOND=raw=token\nESCAPED=\"literal\\$and\\`tick\"\n")
+        for arguments in [("--list",), ("FIRST",), ("SECOND",), ("ESCAPED",), ("--revision",), ("--check",)]:
+            reference = subprocess.run([sys.executable, str(HELPER)] + list(arguments), env=self.environment, capture_output=True, check=True)
+            self.assertEqual(self.run_helper(*arguments).stdout, reference.stdout)
+
+    @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
+    def test_native_first_run_has_no_cli_or_python_requirement(self):
+        self.envfile.unlink()
+        self.environment.pop("SECRETS_FILE")
+        self.environment["PATH"] = "/no-runtime-tools"
+        default_file = self.root / ".env"
+        self.assertFalse((self.root / ".local/bin/secret").exists())
+        self.assertEqual(self.run_helper("--list").stdout, b"")
+        self.save("FRESH", "first value")
+        self.assertEqual(self.run_helper("FRESH").stdout, b"first value")
+        self.assertTrue(default_file.exists())
+        self.assertEqual(default_file.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((self.root / ".local/bin/secret").exists())
+
+    @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
+    def test_native_fifo_is_rejected_without_blocking(self):
+        self.envfile.unlink()
+        os.mkfifo(str(self.envfile), 0o600)
+        result = subprocess.run(HELPER_COMMAND + ["--list"], env=self.environment, capture_output=True, timeout=3)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_literal_values_round_trip_and_source_without_execution(self):
         sentinel = self.root / "should-not-exist"
@@ -184,6 +267,14 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(self.envfile.is_symlink())
         self.assertIn(b"NEW=new\n", target.read_bytes())
 
+    def test_dangling_symlink_keeps_link_when_creating_target(self):
+        target = self.root / "new-target.env"
+        self.envfile.unlink()
+        self.envfile.symlink_to(target.name)
+        self.save("NEW", "new")
+        self.assertTrue(self.envfile.is_symlink())
+        self.assertEqual(target.read_bytes(), b"NEW=new\n")
+
     def test_symlink_retarget_conflicts(self):
         first = self.root / "first.env"
         second = self.root / "second.env"
@@ -216,6 +307,8 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob(".secret-*")), [])
 
     def test_external_write_before_replace_is_detected(self):
+        if NATIVE_HELPER:
+            self.skipTest("reference-specific monkeypatch; native shares CLI stale-revision and lock-contention tests")
         before = self.envfile.read_bytes()
         revision = self.revision()
         external = before + b"EXTERNAL=keep\n"

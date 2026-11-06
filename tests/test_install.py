@@ -9,6 +9,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NATIVE_HELPER = os.environ.get("SECRET_TEST_HELPER")
+HELPER = Path(NATIVE_HELPER or "/usr/bin/true")
 
 
 @unittest.skipUnless(sys.platform == "darwin", "native installer test requires macOS")
@@ -21,11 +23,14 @@ class InstallTests(unittest.TestCase):
             app = build / "Secret.app"
             (app / "Contents/MacOS").mkdir(parents=True)
             (app / "Contents/Resources").mkdir()
+            (app / "Contents/Helpers").mkdir()
             shutil.copyfile("/usr/bin/true", str(app / "Contents/MacOS/Secret"))
             (app / "Contents/MacOS/Secret").chmod(0o755)
-            shutil.copyfile(str(ROOT / "helper/secret"), str(app / "Contents/Resources/secret"))
+            shutil.copyfile(str(HELPER), str(app / "Contents/Helpers/secret"))
+            (app / "Contents/Helpers/secret").chmod(0o755)
             with (app / "Contents/Info.plist").open("wb") as stream:
                 plistlib.dump({"CFBundleExecutable": "Secret", "CFBundleIdentifier": "net.aspectstudio.secret.fixture", "CFBundlePackageType": "APPL", "CFBundleName": "Secret"}, stream)
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app / "Contents/Helpers/secret")], check=True, capture_output=True)
             subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True, capture_output=True)
             (home / ".local/bin").mkdir(parents=True)
             old_helper = b"#!/bin/sh\nprintf legacy\n"
@@ -38,14 +43,14 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
             self.assertEqual(envfile.read_bytes(), b"# fixture\nFIRST=one\n")
             self.assertTrue((home / "Applications/Secret.app/Contents/MacOS/Secret").exists())
-            self.assertEqual((home / ".local/bin/secret").read_bytes(), (ROOT / "helper/secret").read_bytes())
+            self.assertEqual((home / ".local/bin/secret").read_bytes(), (app / "Contents/Helpers/secret").read_bytes())
             backups = list((home / "Library/Application Support/Secret/Backups").glob("secret-helper-*"))
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_bytes(), old_helper)
             self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
             result = subprocess.run([str(home / ".local/bin/secret"), "FIRST"], env=environment, capture_output=True)
             self.assertEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, b"one")
+            self.assertEqual(result.stdout, b"one" if NATIVE_HELPER else b"")
             repeat = subprocess.run(["/bin/bash", str(ROOT / "scripts/install.sh"), "--skip-build"], env=environment, capture_output=True)
             self.assertEqual(repeat.returncode, 0, repeat.stderr.decode("utf-8"))
             self.assertEqual(len(list((home / "Library/Application Support/Secret/Backups").glob("Secret-*.app"))), 1)

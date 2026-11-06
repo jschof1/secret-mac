@@ -1,8 +1,9 @@
-name: Build Mac app
+name: Build Mac release
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -14,15 +15,71 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Build app
+      - name: Build universal app
         run: bash scripts/build.sh
-      - name: Test helper
+      - name: Test reference helper
         run: /usr/bin/python3 -m unittest discover -s tests -v
-      - name: Package app
-        run: ditto -c -k --sequesterRsrc --keepParent build/Secret.app build/Secret.zip
+      - name: Test native helper
+        env:
+          SECRET_TEST_HELPER: ${{ github.workspace }}/build/Secret.app/Contents/Helpers/secret
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Test bundled GUI client
+        run: |
+          xcrun swiftc -parse-as-library -swift-version 5 -target arm64-apple-macos14.0 Sources/HelperClient.swift tests/HelperClientSmoke.swift -o build/HelperClientSmoke
+          fresh_home="$(mktemp -d "$RUNNER_TEMP/secret-fresh.XXXXXX")"
+          build/HelperClientSmoke "$PWD/build/Secret.app" "$fresh_home"
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Prepare disk-image layout tools
+        run: |
+          python3 -m venv build/packaging-venv
+          build/packaging-venv/bin/pip install --disable-pip-version-check -r packaging/requirements.txt
+      - name: Package downloads
+        env:
+          SECRET_PACKAGING_PYTHON: ${{ github.workspace }}/build/packaging-venv/bin/python
+        run: bash scripts/package.sh
+      - name: Verify packaged downloads
+        run: /usr/bin/python3 scripts/verify-release.py build/release
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: secret-mac-arm64
-          path: build/Secret.zip
+          name: secret-macos-release
+          path: build/release/*
           retention-days: 7
           if-no-files-found: error
+
+  intel:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build universal app on Intel
+        run: bash scripts/build.sh
+      - name: Test native helper on Intel
+        env:
+          SECRET_TEST_HELPER: ${{ github.workspace }}/build/Secret.app/Contents/Helpers/secret
+        run: /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Test bundled GUI client on Intel
+        run: |
+          xcrun swiftc -parse-as-library -swift-version 5 -target x86_64-apple-macos14.0 Sources/HelperClient.swift tests/HelperClientSmoke.swift -o build/HelperClientSmoke
+          fresh_home="$(mktemp -d "$RUNNER_TEMP/secret-fresh.XXXXXX")"
+          build/HelperClientSmoke "$PWD/build/Secret.app" "$fresh_home"
+
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, intel]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: secret-macos-release
+          path: release
+      - name: Verify tag and create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          test "$GITHUB_REF_NAME" = "v$version"
+          gh release create "$GITHUB_REF_NAME" release/* --draft --verify-tag --title "Secret $version" --notes-file packaging/RELEASE_NOTES.md

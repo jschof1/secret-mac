@@ -1,64 +1,57 @@
-# Secret
+<div align="center">
+  <img src="docs/icon.png" width="80" height="80" alt="Secret icon">
+  <h1>Secret</h1>
+  <p>A small native Mac app for your envs.</p>
+  <p><a href="https://github.com/jschof1/secret-mac/releases/latest/download/Secret.dmg"><strong>Download for Mac</strong></a> · <a href="https://github.com/jschof1/secret-mac/releases/latest">All downloads</a></p>
+  <p>macOS 14+ · Apple Silicon and Intel · MIT licence</p>
+</div>
 
-A small native Mac app for finding, copying and saving local envs. It uses the same `~/.env` file as `secret`.
+<p align="center"><img src="docs/screenshot.png" width="560" alt="Secret's native search and env list. Sample names are shown; values stay hidden."></p>
 
-Open **Secret** from Applications. Search an env name and click its copy button. Use **New env** to add one. The row menu has **Edit** and **Reveal value**.
+## Install
+
+1. Download [Secret.dmg](https://github.com/jschof1/secret-mac/releases/latest/download/Secret.dmg).
+2. Drag **Secret** into **Applications**.
+3. Open **Secret**.
+
+No Python, developer tools, account or preinstalled helper is required. The app includes its native helper.
+
+**This release is not Developer ID signed or Apple-notarised.** After attempting to open it, macOS may require approval in **System Settings → Privacy & Security → Open Anyway**. Use a copy from this repository's [official releases](https://github.com/jschof1/secret-mac/releases). Apple describes this process in [Open apps safely on your Mac](https://support.apple.com/102445).
+
+Prefer a ZIP? Download [Secret.zip](https://github.com/jschof1/secret-mac/releases/latest/download/Secret.zip). [SHA256 checksums](https://github.com/jschof1/secret-mac/releases/latest/download/SHA256SUMS.txt) cover every download.
+
+## Use
+
+Search an env name and click its copy button. Press **⌘N** to add one. Use the row menu to edit or reveal it.
 
 | Shortcut | Action |
 | --- | --- |
 | ⌘F | Search |
 | ⌘N | New env |
-| ↩ in search | Copy the first match |
-| ⇧⌘C | Copy the selected env |
+| Return in search | Copy the first match |
+| ⇧⌘C | Copy the selected or first matching env |
 | ⌘E | Edit the selected env |
 | ⌘R | Reload |
-| Esc | Close the form or hide a revealed value |
+| Esc | Close the form or hide a value |
 
-Values copied with the copy button or Copy value shortcut clear after 60 seconds or when the app quits, provided another app has not changed the clipboard. Revealed values hide when the app loses focus. Clipboard privacy flags are advisory; other apps can still read the clipboard.
+Secret reads your existing `~/.env`. If it does not exist, your first save creates it with private permissions. It preserves unrelated entries and makes a private backup before each changed save.
 
-## Install
+Values and backups are **plaintext local files**. There is no encryption, Keychain storage, cloud sync or credential upload. The app does not change shell startup files or inject envs into running processes. See [Local data](docs/data.md) for the exact storage and clipboard behaviour.
 
-Requires an Apple silicon Mac with macOS 14 or later and Xcode Command Line Tools. No package downloads are needed.
+The [command-line tool](docs/cli.md) is optional. The app works without installing it.
 
-```sh
-./scripts/install.sh
-```
+## Build and contribute
 
-This builds `build/Secret.app`, installs it in `~/Applications` and updates `~/.local/bin/secret`. It backs up the previous app and helper first. It does not change any credentials during installation.
-
-To install an existing build, run `./scripts/install.sh --skip-build`. `SECRET_BUILD_DIR` changes the build location. `SECRET_INSTALL_HOME` changes the installation root for testing.
-
-GitHub Actions produces `Secret.zip`. Extract it with `ditto -x -k Secret.zip build`, then run the installer with `--skip-build`. Builds are ad-hoc signed for local use and are not notarised.
-
-## CLI
+Building from source requires Xcode Command Line Tools. Downloading the app does not.
 
 ```sh
-secret --list
-secret SERVICE_API_KEY
-secret --json
+git clone https://github.com/jschof1/secret-mac.git
+cd secret-mac
+./scripts/build.sh
 ```
 
-`--json` contains names only. Literal quoted values now return their contents without the surrounding quotes. Unquoted values keep the previous helper's behavior. No expansion or command execution occurs when reading values.
+The universal app is written to `build/Secret.app`. To install the app and CLI from that build, use `./scripts/install.sh --skip-build`. Existing copies are backed up first. No credentials change during installation.
 
-The app uses `--revision`, `--inspect NAME`, `--add NAME --expected REVISION` and `--set NAME --expected REVISION`. Save commands read the new value from stdin. Use `printf %s` when piping a value from the shell, so it does not add a newline. Do not pass values as command arguments. `--inspect` returns a value and revision as JSON, so keep its output private. `secret --check` checks the file's format without changing it or printing values.
+See [Development and releases](docs/development.md) for fixture tests, packaging and release steps. Bug reports should use dummy values. For security issues, use [private reporting](https://github.com/jschof1/secret-mac/security/advisories/new).
 
-`--export` retains the previous helper's behavior. It sources the env file with Bash and prints the exported environment. The app never uses this command.
-
-## Data
-
-Credentials stay in the existing plaintext env file. This is a local utility, without encryption, a sandbox, account login or automatic sync. It does not change `.env.keys`, shell startup files or other machines.
-
-Each changed save first makes a private backup in `~/Library/Application Support/Secret/Backups`. Backups are plaintext, mode `0600`, inside a `0700` folder. The app keeps them until you remove them. A save replaces one assignment or appends a new one, preserves unrelated text and uses a private temporary file followed by an atomic rename. Symlinks to owned regular files are preserved. Extended attributes are copied. A private `.secret.lock` file remains next to the env file to coordinate future saves.
-
-Name validation, safe shell literal quoting and single-line values keep new entries readable by both the CLI and shells. The helper refuses ambiguous shell scripts, multiline values and duplicate target names. Files with Windows line endings are read-only until you convert them to LF in a text editor. Existing line endings are never converted automatically. If the file changed since the form opened, cancel the form, reload and try again. A lock serializes this helper's writes; a final fingerprint check detects other edits made before replacement. Arbitrary editors do not share that lock, so this is not a transactional guarantee against every external writer.
-
-Existing shell sessions retain values they already loaded. New sessions read the updated file.
-
-## Check
-
-```sh
-/usr/bin/python3 -m unittest discover -s tests -v
-bash -n scripts/build.sh scripts/install.sh
-```
-
-Tests use temporary fixtures. For native UI testing, launch a separate app bundle with `SECRETS_FILE`, `SECRET_BACKUP_DIR` and `SECRET_HELPER_PATH` set to fixture paths. The app reads those variables but does not persist them. No credential values belong in screenshots or source control.
+[MIT licence](LICENSE) · [Changelog](CHANGELOG.md) · [Releases](https://github.com/jschof1/secret-mac/releases)

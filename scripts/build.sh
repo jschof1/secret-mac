@@ -40,8 +40,8 @@ done
 
 /usr/bin/lipo -create "$build_dir/native/secret-arm64" "$build_dir/native/secret-x86_64" -output "$app_dir/Contents/Helpers/secret"
 /usr/bin/lipo -create "$build_dir/native/Secret-arm64" "$build_dir/native/Secret-x86_64" -output "$app_dir/Contents/MacOS/Secret"
-/usr/bin/lipo -verify_arch arm64 x86_64 "$app_dir/Contents/Helpers/secret"
-/usr/bin/lipo -verify_arch arm64 x86_64 "$app_dir/Contents/MacOS/Secret"
+/usr/bin/lipo "$app_dir/Contents/Helpers/secret" -verify_arch arm64 x86_64
+/usr/bin/lipo "$app_dir/Contents/MacOS/Secret" -verify_arch arm64 x86_64
 rm -f "$app_dir/Contents/Resources/secret"
 
 /usr/bin/python3 "$repo_dir/scripts/icon.py" "$build_dir"
@@ -68,7 +68,12 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 PLIST
 
 /usr/bin/plutil -lint "$app_dir/Contents/Info.plist"
-/usr/bin/codesign --force --sign - "$app_dir/Contents/Helpers/secret"
-/usr/bin/codesign --force --sign - "$app_dir"
+signing_identity="${SECRET_SIGN_IDENTITY:--}"
+signing_arguments=(--force --sign "$signing_identity")
+if [[ "$signing_identity" != "-" ]]; then
+  signing_arguments+=(--options runtime --timestamp)
+fi
+/usr/bin/codesign "${signing_arguments[@]}" "$app_dir/Contents/Helpers/secret"
+/usr/bin/codesign "${signing_arguments[@]}" "$app_dir"
 /usr/bin/codesign --verify --deep --strict "$app_dir"
 printf '%s\n' "$app_dir"
