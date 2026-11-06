@@ -39,7 +39,7 @@ struct HelperClient: Sendable {
 
     init() {
         let current = ProcessInfo.processInfo.environment
-        path = current["SECRET_HELPER_PATH"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/secret").path
+        path = current["SECRET_HELPER_PATH"] ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/secret").path
         var filtered = ["HOME": FileManager.default.homeDirectoryForCurrentUser.path, "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
         for key in ["SECRETS_FILE", "SECRET_BACKUP_DIR"] {
             if let value = current[key] { filtered[key] = value }

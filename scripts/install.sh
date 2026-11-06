@@ -14,7 +14,7 @@ if [[ $# -ne 0 ]]; then
   exit 2
 fi
 app_source="$build_dir/Secret.app"
-[[ -x "$app_source/Contents/MacOS/Secret" && -f "$app_source/Contents/Resources/secret" ]] || {
+[[ -x "$app_source/Contents/MacOS/Secret" && -x "$app_source/Contents/Helpers/secret" ]] || {
   printf 'Build Secret.app before installing.\n' >&2
   exit 2
 }
@@ -42,7 +42,7 @@ helper_stage="$(mktemp "$bin_dir/.secret-install.XXXXXX")"
 trap 'rm -rf "$app_stage"; rm -f "$helper_stage"' EXIT
 /usr/bin/ditto "$app_source" "$app_stage/Secret.app"
 /usr/bin/codesign --verify --deep --strict "$app_stage/Secret.app"
-cp "$app_source/Contents/Resources/secret" "$helper_stage"
+cp "$app_source/Contents/Helpers/secret" "$helper_stage"
 chmod 755 "$helper_stage"
 "$helper_stage" --help >/dev/null
 if [[ -e "$apps_dir/Secret.app" || -L "$apps_dir/Secret.app" ]]; then
