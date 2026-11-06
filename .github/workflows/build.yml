@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: secret-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-15
@@ -50,10 +54,17 @@ jobs:
 
   intel:
     runs-on: macos-15-intel
+    needs: build
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Build universal app on Intel
-        run: bash scripts/build.sh
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: secret-macos-release
+          path: release
+      - name: Verify shipped downloads on Intel
+        run: /usr/bin/python3 scripts/verify-release.py release
+      - name: Extract shipped app for Intel tests
+        run: ditto -xk release/Secret.zip build
       - name: Test native helper on Intel
         env:
           SECRET_TEST_HELPER: ${{ github.workspace }}/build/Secret.app/Contents/Helpers/secret

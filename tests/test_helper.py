@@ -74,6 +74,18 @@ class HelperTests(unittest.TestCase):
             shell = subprocess.run(["/bin/bash", "-c", '. "$1"; printf "%s" "$FIRST"', "fixture", str(self.envfile)], env={"PATH": "/usr/bin:/bin"}, capture_output=True, check=True)
             self.assertEqual(self.run_helper("FIRST").stdout, shell.stdout)
 
+    def test_value_preserves_leading_bom_scalar(self):
+        value = "\ufeffliteral"
+        self.save("BOM_LITERAL", value)
+        self.assertEqual(self.run_helper("BOM_LITERAL").stdout, value.encode("utf-8"))
+
+    def test_file_bom_is_not_silently_removed(self):
+        original = b"\xef\xbb\xbfFIRST=one\nSECOND=two\n"
+        self.write(original)
+        self.assertEqual(self.run_helper("--list").stdout, b"SECOND\n")
+        self.run_helper("--check", success=False)
+        self.assertEqual(self.envfile.read_bytes(), original)
+
     def test_check_does_not_change_file_or_print_values(self):
         original = self.envfile.read_bytes()
         self.assertEqual(self.run_helper("--check").stdout, b"OK\n")
@@ -144,7 +156,7 @@ class HelperTests(unittest.TestCase):
         exported = self.run_helper("-e").stdout
         self.assertIn(b"FIRST=one\n", exported)
         self.assertIn(b"SECOND=two=three\n", exported)
-        self.assertNotIn(b"--expected", self.run_helper("--help").stderr)
+        self.assertIn(b"--list", self.run_helper("--help").stdout)
 
     @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
     def test_native_matches_reference_literal_reads_and_revision(self):

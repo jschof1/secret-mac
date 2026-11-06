@@ -23,10 +23,10 @@ struct EnvSnapshot {
     }
 
     func lines() throws -> [String] {
-        guard let text = String(data: data, encoding: .utf8) else {
+        guard String(data: data, encoding: .utf8) != nil else {
             throw SecretFailure("The env file is not UTF-8. Edit it in a text editor.")
         }
-        return text.components(separatedBy: "\n")
+        return String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
     }
 }
 
@@ -170,7 +170,7 @@ enum EnvDocument {
         }
         let assignment = name + "=" + shellLiteral(value)
         if adding {
-            let text = String(data: snapshot.data, encoding: .utf8)!
+            let text = String(decoding: snapshot.data, as: UTF8.self)
             return Data((text + (text.isEmpty || text.hasSuffix("\n") ? "" : "\n") + assignment + "\n").utf8)
         }
         lines[positions[0]] = assignment

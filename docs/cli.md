@@ -17,6 +17,8 @@ install -m 755 secret "$HOME/.local/bin/secret"
 
 No shell startup files are changed automatically.
 
+The standalone CLI is also not Developer ID signed or notarised. A browser download may need approval in **System Settings → Privacy & Security → Open Anyway** after the first launch attempt. See [Apple's first-launch guidance](https://support.apple.com/en-gb/102445).
+
 ## Read
 
 ```sh

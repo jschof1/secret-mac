@@ -106,7 +106,8 @@ enum SecretCommand {
         case let .save(name, adding, expected):
             let data = try EnvStore.read(STDIN_FILENO, maximum: EnvDocument.maxValueBytes + 1)
             guard data.count <= EnvDocument.maxValueBytes else { throw SecretFailure("The value is too long.") }
-            guard let value = String(data: data, encoding: .utf8) else { throw SecretFailure("The value must be UTF-8 text.") }
+            guard String(data: data, encoding: .utf8) != nil else { throw SecretFailure("The value must be UTF-8 text.") }
+            let value = String(decoding: data, as: UTF8.self)
             print(try EnvStore.save(path, name: name, value: value, adding: adding, expected: expected) ? "Saved" : "Unchanged")
         case .export, .help: break
         }
