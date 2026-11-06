@@ -27,7 +27,7 @@ for architecture in arm64 x86_64; do
     "$repo_dir/NativeHelper/EnvDocument.swift" \
     "$repo_dir/NativeHelper/EnvStore.swift" \
     "$repo_dir/NativeHelper/SecretCommand.swift" \
-    -o "$build_dir/native/secret-$architecture"
+    -o "$build_dir/native/secret-helper-$architecture"
   xcrun swiftc -parse-as-library -swift-version 5 -O \
     -sdk "$sdk_path" -target "$architecture-apple-macos14.0" \
     -framework AppKit -framework SwiftUI \
@@ -35,13 +35,17 @@ for architecture in arm64 x86_64; do
     "$repo_dir/Sources/SecretModel.swift" \
     "$repo_dir/Sources/ContentView.swift" \
     "$repo_dir/Sources/SecretApp.swift" \
-    -o "$build_dir/native/Secret-$architecture"
+    -o "$build_dir/native/secret-app-$architecture"
 done
 
-/usr/bin/lipo -create "$build_dir/native/secret-arm64" "$build_dir/native/secret-x86_64" -output "$app_dir/Contents/Helpers/secret"
-/usr/bin/lipo -create "$build_dir/native/Secret-arm64" "$build_dir/native/Secret-x86_64" -output "$app_dir/Contents/MacOS/Secret"
+/usr/bin/lipo -create "$build_dir/native/secret-helper-arm64" "$build_dir/native/secret-helper-x86_64" -output "$app_dir/Contents/Helpers/secret"
+/usr/bin/lipo -create "$build_dir/native/secret-app-arm64" "$build_dir/native/secret-app-x86_64" -output "$app_dir/Contents/MacOS/Secret"
 /usr/bin/lipo "$app_dir/Contents/Helpers/secret" -verify_arch arm64 x86_64
 /usr/bin/lipo "$app_dir/Contents/MacOS/Secret" -verify_arch arm64 x86_64
+if cmp -s "$app_dir/Contents/Helpers/secret" "$app_dir/Contents/MacOS/Secret"; then
+  printf 'The app and helper must be distinct binaries.\n' >&2
+  exit 2
+fi
 rm -f "$app_dir/Contents/Resources/secret"
 
 /usr/bin/python3 "$repo_dir/scripts/icon.py" "$build_dir"
