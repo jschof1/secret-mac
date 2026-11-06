@@ -8,7 +8,7 @@ enum EnvStore {
         let configured = ProcessInfo.processInfo.environment["SECRETS_FILE"]
         let value = configured?.isEmpty == false ? configured! : home + "/.env"
         let expanded = value.hasPrefix("~/") ? home + String(value.dropFirst()) : value
-        return URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return expanded.hasPrefix("/") ? expanded : FileManager.default.currentDirectoryPath + "/" + expanded
     }
 
     static func identity(_ details: stat) -> String {
@@ -17,7 +17,7 @@ enum EnvStore {
     }
 
     static func snapshot(_ requested: String) throws -> EnvSnapshot {
-        let target = URL(fileURLWithPath: requested).resolvingSymlinksInPath().path
+        let target = try resolvedPath(requested)
         let descriptor = Darwin.open(target, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else {
             if errno == ENOENT { return EnvSnapshot(requested: requested, target: target, data: Data(), identity: "missing") }
@@ -37,6 +37,33 @@ enum EnvStore {
             throw SecretFailure("The env file changed. Reload and try again.")
         }
         return EnvSnapshot(requested: requested, target: target, data: data, identity: identity(after))
+    }
+
+    private static func resolvedPath(_ path: String, followedLinks: Int = 0) throws -> String {
+        if let resolved = Darwin.realpath(path, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        guard errno == ENOENT, followedLinks < 40 else {
+            throw SecretFailure("Cannot open the env file. Check its location and permissions.")
+        }
+        var details = stat()
+        if lstat(path, &details) == 0, (details.st_mode & S_IFMT) == S_IFLNK {
+            var buffer = [CChar](repeating: 0, count: 16_384)
+            let count = readlink(path, &buffer, buffer.count - 1)
+            guard count >= 0, count < buffer.count - 1 else { throw SystemFailure() }
+            buffer[count] = 0
+            let link = String(cString: buffer)
+            let parent = (path as NSString).deletingLastPathComponent
+            return try resolvedPath(link.hasPrefix("/") ? link : parent + "/" + link, followedLinks: followedLinks + 1)
+        }
+        let parent = (path as NSString).deletingLastPathComponent
+        guard !parent.isEmpty, parent != path else { throw SystemFailure() }
+        let resolvedParent = try resolvedPath(parent, followedLinks: followedLinks)
+        let name = (path as NSString).lastPathComponent
+        if name == "." { return resolvedParent }
+        if name == ".." { return (resolvedParent as NSString).deletingLastPathComponent }
+        return (resolvedParent == "/" ? "/" : resolvedParent + "/") + name
     }
 
     static func read(_ descriptor: Int32, maximum: Int) throws -> Data {
