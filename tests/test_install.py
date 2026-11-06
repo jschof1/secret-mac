@@ -31,8 +31,8 @@ class InstallTests(unittest.TestCase):
             (app / "Contents/Helpers/secret").chmod(0o755)
             with (app / "Contents/Info.plist").open("wb") as stream:
                 plistlib.dump({"CFBundleExecutable": "Secret", "CFBundleIdentifier": "net.aspectstudio.secret.fixture", "CFBundlePackageType": "APPL", "CFBundleName": "Secret"}, stream)
-            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app / "Contents/Helpers/secret")], check=True, capture_output=True)
-            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True, capture_output=True)
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app / "Contents/Helpers/secret")], check=True, capture_output=True, timeout=30)
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True, capture_output=True, timeout=30)
             (home / ".local/bin").mkdir(parents=True)
             old_helper = b"#!/bin/sh\nprintf legacy\n"
             (home / ".local/bin/secret").write_bytes(old_helper)
@@ -40,7 +40,7 @@ class InstallTests(unittest.TestCase):
             envfile = home / ".env"
             envfile.write_bytes(b"# fixture\nFIRST=one\n")
             environment = dict(os.environ, SECRET_INSTALL_HOME=str(home), SECRET_BUILD_DIR=str(build), SECRETS_FILE=str(envfile))
-            result = subprocess.run(["/bin/bash", str(ROOT / "scripts/install.sh"), "--skip-build"], env=environment, capture_output=True)
+            result = subprocess.run(["/bin/bash", str(ROOT / "scripts/install.sh"), "--skip-build"], env=environment, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
             self.assertEqual(envfile.read_bytes(), b"# fixture\nFIRST=one\n")
             self.assertTrue((home / "Applications/Secret.app/Contents/MacOS/Secret").exists())
@@ -49,10 +49,10 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_bytes(), old_helper)
             self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
-            result = subprocess.run([str(home / ".local/bin/secret"), "FIRST"], env=environment, capture_output=True)
+            result = subprocess.run([str(home / ".local/bin/secret"), "FIRST"], env=environment, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0)
             self.assertEqual(result.stdout, b"" if HELPER == Path("/usr/bin/true") else b"one")
-            repeat = subprocess.run(["/bin/bash", str(ROOT / "scripts/install.sh"), "--skip-build"], env=environment, capture_output=True)
+            repeat = subprocess.run(["/bin/bash", str(ROOT / "scripts/install.sh"), "--skip-build"], env=environment, capture_output=True, timeout=30)
             self.assertEqual(repeat.returncode, 0, repeat.stderr.decode("utf-8"))
             self.assertEqual(len(list((home / "Library/Application Support/Secret/Backups").glob("Secret-*.app"))), 1)
             self.assertEqual(envfile.read_bytes(), b"# fixture\nFIRST=one\n")

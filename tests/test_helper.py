@@ -40,7 +40,7 @@ class HelperTests(unittest.TestCase):
         self.envfile.chmod(0o600)
 
     def run_helper(self, *arguments, value=None, success=True):
-        result = subprocess.run(HELPER_COMMAND + list(arguments), input=None if value is None else value.encode("utf-8"), capture_output=True, env=self.environment)
+        result = subprocess.run(HELPER_COMMAND + list(arguments), input=None if value is None else value.encode("utf-8"), capture_output=True, env=self.environment, timeout=10)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
         else:

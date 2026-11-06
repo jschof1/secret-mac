@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
         assert "python" not in dependencies, "Release links a Python runtime"
     helper = str(app / "Contents/Helpers/secret")
     environment = {"HOME": str(root), "PATH": "/usr/bin:/bin", "SECRETS_FILE": str(root / "fresh.env"), "SECRET_BACKUP_DIR": str(root / "backups")}
-    assert run([helper, "--json"], env=environment).strip() == b"[]"
+    assert json.loads(run([helper, "--json"], env=environment)) == []
     assert not (root / "fresh.env").exists()
     revision = run([helper, "--revision"], env=environment).decode().strip()
     value = b"fixture $literal 'quote' = only"

@@ -27,7 +27,7 @@ xcrun SetFile -a C "$stage/dmg"
 cp "$app_dir/Contents/Helpers/secret" "$stage/cli/secret"
 cp "$repo_dir/LICENSE" "$stage/cli/LICENSE"
 cp "$repo_dir/docs/cli.md" "$stage/cli/README.md"
-/usr/bin/tar -czf "$release_dir/secret-cli-universal.tar.gz" -C "$stage/cli" secret LICENSE README.md
+COPYFILE_DISABLE=1 /usr/bin/tar -czf "$release_dir/secret-cli-universal.tar.gz" -C "$stage/cli" secret LICENSE README.md
 (
     cd "$release_dir"
     /usr/bin/shasum -a 256 Secret.dmg Secret.zip secret-cli-universal.tar.gz > SHA256SUMS.txt
