@@ -58,6 +58,7 @@ final class SecretModel: ObservableObject {
     @Published var focusSearch = UUID()
     private let helper = HelperClient()
     private var feedback: Task<Void, Never>?
+    private var reloadGeneration = 0
     private var revealGeneration = 0
     private var copyGeneration = 0
 
@@ -72,15 +73,24 @@ final class SecretModel: ObservableObject {
     }
 
     func reload() async {
-        guard !loading else { return }
+        reloadGeneration += 1
+        let generation = reloadGeneration
         loading = true
         hide()
-        defer { loading = false }
+        defer { if generation == reloadGeneration { loading = false } }
         do {
-            names = try await helper.names()
+            let currentNames = try await helper.names()
+            guard generation == reloadGeneration else { return }
+            names = currentNames
             error = nil
             if let selected, !names.contains(selected) { self.selected = nil }
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            if generation == reloadGeneration {
+                names = []
+                selected = nil
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     func add() {
@@ -127,7 +137,9 @@ final class SecretModel: ObservableObject {
                     guard !Task.isCancelled else { return }
                     copiedName = nil
                 }
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                if generation == copyGeneration { self.error = error.localizedDescription }
+            }
         }
     }
 
@@ -149,11 +161,13 @@ final class SecretModel: ObservableObject {
 
     func save(_ session: EditSession, name: String, value: String) async throws {
         let command = session.existingName == nil ? "--add=" : "--set="
-        _ = try await helper.run([command + name, "--expected", session.revision], input: value)
+        let output = try await helper.run([command + name, "--expected", session.revision], input: value)
         editor = nil
         await reload()
         if session.existingName == nil { query = name }
         selected = name
+        let status = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .newlines)
+        if status.hasPrefix("Saved.") { error = status }
     }
 
     func copyName(_ name: String) {

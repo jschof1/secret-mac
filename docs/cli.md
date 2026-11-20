@@ -28,7 +28,7 @@ secret --json
 secret --check
 ```
 
-`--json` contains names only. `--check` validates the file without changing it or printing values. Quoted literals are decoded without expansion or execution. The CLI reads `${SECRETS_FILE:-$HOME/.env}`.
+`--json` contains names only. `--check` validates the file without changing it or printing values. Quoted literals and inline comments are parsed the same way in the CLI and app. The CLI reads `${SECRETS_FILE:-$HOME/.env}`. See [Local data](data.md) for supported file syntax.
 
 ## Save
 
@@ -41,4 +41,6 @@ printf %s 'example-only-value' | secret --add SERVICE_API_KEY --expected "$revis
 
 Use `--set` to update an existing name. A stale revision refuses the save. Do not put real credentials directly into command arguments or saved shell history.
 
-`--inspect NAME` returns a value and revision as JSON for the GUI. Keep its output private. `--export` retains the original helper's explicit Bash-source behaviour and prints the exported environment. The app never uses it.
+`--inspect NAME` returns a value and revision as JSON for the GUI. Keep its output private.
+
+`--export` prints shell-quoted `export NAME=value` statements from the selected env file in name order. It reads only local assignments and refuses duplicate names and unsupported syntax before printing any values. The command itself does not execute a shell. Keep its output private. Scripts written for v1 that expected shell expressions or inherited environment variables need to be updated.

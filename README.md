@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/icon.png" width="80" height="80" alt="Secret icon">
   <h1>Secret</h1>
-  <p>A small native Mac app for your envs.</p>
+  <p>Search, copy and edit your <code>~/.env</code> variables in a native Mac app.</p>
   <p><a href="https://github.com/jschof1/secret-mac/releases/latest/download/Secret.dmg"><strong>Download for Mac</strong></a> · <a href="https://github.com/jschof1/secret-mac/releases/latest">All downloads</a></p>
   <p>macOS 14+ · Apple Silicon and Intel · MIT licence</p>
 </div>
@@ -22,7 +22,7 @@ Prefer a ZIP? Download [Secret.zip](https://github.com/jschof1/secret-mac/releas
 
 ## Use
 
-Search an env name and click its copy button. Press **⌘N** to add one. Use the row menu to edit or reveal it.
+Search for a variable by name and click its copy button. Press **⌘N** to add one. Use the row menu to edit or reveal it.
 
 | Shortcut | Action |
 | --- | --- |

@@ -53,12 +53,13 @@ class HelperTests(unittest.TestCase):
     def save(self, name, value, adding=True, expected=None, success=True):
         return self.run_helper("--add" if adding else "--set", name, "--expected", self.revision() if expected is None else expected, value=value, success=success)
 
-    def test_legacy_reads_and_names_only_json(self):
-        self.write(b"# fixture\nFIRST=one\nFIRST=later\nSECOND=two=three\nexport OTHER=hidden\nlower=hidden\n")
+    def test_names_only_json_and_literal_reads(self):
+        self.write(b"# fixture\nFIRST=one # a note\nSECOND=two=three\n  export OTHER=part' two' # note\nlower=hidden\n")
         self.assertEqual(self.run_helper("FIRST").stdout, b"one")
         self.assertEqual(self.run_helper("SECOND").stdout, b"two=three")
-        self.assertEqual(self.run_helper("--list").stdout, b"FIRST\nFIRST\nSECOND\n")
-        self.assertEqual(json.loads(self.run_helper("--json").stdout), ["FIRST", "FIRST", "SECOND"])
+        self.assertEqual(self.run_helper("OTHER").stdout, b"part two")
+        self.assertEqual(self.run_helper("--list").stdout, b"FIRST\nSECOND\nOTHER\n")
+        self.assertEqual(json.loads(self.run_helper("--json").stdout), ["FIRST", "SECOND", "OTHER"])
         self.assertNotIn(b"one", self.run_helper("--json").stdout)
 
     def test_inspect_and_regex_injection(self):
@@ -82,7 +83,7 @@ class HelperTests(unittest.TestCase):
     def test_file_bom_is_not_silently_removed(self):
         original = b"\xef\xbb\xbfFIRST=one\nSECOND=two\n"
         self.write(original)
-        self.assertEqual(self.run_helper("--list").stdout, b"SECOND\n")
+        self.run_helper("--list", success=False)
         self.run_helper("--check", success=False)
         self.assertEqual(self.envfile.read_bytes(), original)
 
@@ -126,6 +127,14 @@ class HelperTests(unittest.TestCase):
         self.run_helper("--list", success=False)
         self.assertEqual(self.envfile.read_bytes(), original)
 
+    def test_save_cannot_exceed_file_size_limit(self):
+        original = b"#" + b"x" * (backend.MAX_FILE_BYTES - 2) + b"\n"
+        self.write(original)
+        result = self.save("NEW", "value", success=False)
+        self.assertIn(b"would make the env file too large", result.stderr)
+        self.assertEqual(self.envfile.read_bytes(), original)
+        self.assertFalse(self.backups.exists())
+
     def test_unicode_bytes_in_unrelated_lines_are_preserved(self):
         original = "# café e\u0301\nFIRST=one\nOTHER='世界'\n".encode("utf-8")
         self.write(original)
@@ -150,18 +159,30 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.envfile.read_bytes(), before)
         self.assertEqual(target.read_bytes(), b"keep")
 
-    def test_aliases_and_legacy_export_with_fixture_only(self):
+    def test_aliases_and_literal_export_with_fixture_only(self):
         self.assertEqual(self.run_helper("-l").stdout, self.run_helper("--list").stdout)
         self.assertEqual(json.loads(self.run_helper("-j").stdout), ["FIRST", "SECOND"])
+        self.environment["INHERITED_FIXTURE"] = "parent only"
+        self.write(b"FIRST=one\nexport SECOND=two' three' # comment\nlower=skip\nEMPTY=\n")
         exported = self.run_helper("-e").stdout
-        self.assertIn(b"FIRST=one\n", exported)
-        self.assertIn(b"SECOND=two=three\n", exported)
+        self.assertEqual(exported, b"export EMPTY=''\nexport FIRST=one\nexport SECOND='two three'\n")
+        export_file = self.root / "exports.sh"
+        export_file.write_bytes(exported)
+        shell = subprocess.run(["/bin/bash", "-c", '. "$1"; /usr/bin/printenv SECOND', "fixture", str(export_file)],
+                               env=self.environment, capture_output=True, check=True)
+        self.assertEqual(shell.stdout, b"two three\n")
         self.assertIn(b"--list", self.run_helper("--help").stdout)
+
+    def test_export_rejects_dynamic_assignments_without_output(self):
+        for data in [b"FIRST=fixture\nSECOND=\"$FIRST\"\n", b"FIRST=~/folder\n", b"FIRST=prefix:~/folder\n"]:
+            self.write(data)
+            self.assertEqual(self.run_helper("--export", success=False).stdout, b"")
+            self.assertEqual(self.run_helper("--json", success=False).stdout, b"")
 
     @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
     def test_native_matches_reference_literal_reads_and_revision(self):
         self.write(b"# fixture\nFIRST='one'\nSECOND=raw=token\nESCAPED=\"literal\\$and\\`tick\"\n")
-        for arguments in [("--list",), ("FIRST",), ("SECOND",), ("ESCAPED",), ("--revision",), ("--check",)]:
+        for arguments in [("--list",), ("FIRST",), ("SECOND",), ("ESCAPED",), ("--export",), ("--revision",), ("--check",)]:
             reference = subprocess.run([sys.executable, str(HELPER)] + list(arguments), env=self.environment, capture_output=True, check=True)
             self.assertEqual(self.run_helper(*arguments).stdout, reference.stdout)
 
@@ -179,8 +200,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(default_file.stat().st_mode & 0o777, 0o600)
         self.assertFalse((self.root / ".local/bin/secret").exists())
 
-    @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
-    def test_native_fifo_is_rejected_without_blocking(self):
+    def test_fifo_is_rejected_without_blocking(self):
         self.envfile.unlink()
         os.mkfifo(str(self.envfile), 0o600)
         result = subprocess.run(HELPER_COMMAND + ["--list"], env=self.environment, capture_output=True, timeout=3)
@@ -215,7 +235,7 @@ class HelperTests(unittest.TestCase):
     def test_crlf_reads_stay_compatible_and_writes_are_refused(self):
         original = b"# comment\r\nFIRST=one\r\n"
         self.write(original)
-        self.assertEqual(self.run_helper("FIRST").stdout, b"one\r")
+        self.assertEqual(self.run_helper("FIRST").stdout, b"one")
         self.save("NEW", "space value", success=False)
         self.assertEqual(self.envfile.read_bytes(), original)
 
@@ -228,13 +248,20 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.envfile.read_bytes(), before)
         self.assertFalse(self.backups.exists())
 
-    def test_duplicate_targets_and_export_alias_rejected(self):
+    def test_duplicate_targets_are_listed_once_and_refused_for_use(self):
         for data in [b"FIRST=one\nFIRST=two\n", b"FIRST=one\nexport FIRST=two\n", b"FIRST=one\n  FIRST=two\n"]:
             self.write(data)
+            self.assertEqual(json.loads(self.run_helper("--json").stdout), ["FIRST"])
+            self.run_helper("--inspect", "FIRST", success=False)
+            self.assertEqual(self.run_helper("--export", success=False).stdout, b"")
             self.save("FIRST", "three", adding=False, success=False)
             self.assertEqual(self.envfile.read_bytes(), data)
-        self.write(b"export FIRST=one\n")
-        self.save("FIRST", "two", success=False)
+
+    def test_edit_preserves_assignment_prefix_and_inline_comment(self):
+        self.write(b"  export FIRST='one'  # keep the note\n")
+        self.assertEqual(self.save("FIRST", "one", adding=False).stdout.strip(), b"Unchanged")
+        self.save("FIRST", "two", adding=False)
+        self.assertEqual(self.envfile.read_bytes(), b"  export FIRST=two  # keep the note\n")
 
     def test_add_does_not_overwrite_and_set_does_not_create(self):
         original = self.envfile.read_bytes()
@@ -341,6 +368,7 @@ class HelperTests(unittest.TestCase):
     def test_missing_env_file_can_be_created(self):
         self.envfile.unlink()
         self.assertEqual(self.run_helper("--list").stdout, b"")
+        self.run_helper("--export", success=False)
         self.save("NEW", "new")
         self.assertEqual(self.envfile.read_bytes(), b"NEW=new\n")
 
@@ -363,11 +391,12 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(os.getxattr(str(self.envfile), attribute), b"fixture")
 
     def test_existing_helper_matches_safe_fixture_reads(self):
-        legacy = Path.home() / ".local/bin/secret"
-        if not legacy.exists():
-            self.skipTest("existing helper unavailable")
+        configured = os.environ.get("SECRET_TEST_LEGACY_HELPER")
+        if not configured:
+            self.skipTest("legacy comparison requires an explicit helper path")
+        legacy = Path(configured).resolve(strict=True)
         for arguments in [("--list",), ("FIRST",), ("SECOND",)]:
-            previous = subprocess.run([str(legacy)] + list(arguments), env=self.environment, capture_output=True)
+            previous = subprocess.run([str(legacy)] + list(arguments), env=self.environment, capture_output=True, timeout=10)
             self.assertEqual(previous.returncode, 0)
             self.assertEqual(previous.stdout, self.run_helper(*arguments).stdout)
 

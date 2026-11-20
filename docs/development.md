@@ -19,7 +19,7 @@ The build compiles the GUI and native CLI for `arm64` and `x86_64`, combines the
 SECRET_TEST_HELPER="$PWD/build/Secret.app/Contents/Helpers/secret" /usr/bin/python3 -m unittest discover -s tests -v
 ```
 
-The Python helper in `helper/secret` is a reference implementation. It is not bundled or executed by the released app. The shared fixture suite runs against the native binary when `SECRET_TEST_HELPER` is set. A Python-only monkeypatch test is skipped in native mode; native conflict, lock, revision and symlink tests still run. Native-only tests are skipped in reference mode. A legacy-helper comparison also skips when no previous helper is installed.
+The Python helper in `helper/secret` is a reference implementation. It is not bundled or executed by the released app. The shared fixture suite runs against the native binary when `SECRET_TEST_HELPER` is set. A Python-only monkeypatch test is skipped in native mode. Native-only checks skip in reference mode. A legacy-helper comparison runs only when you explicitly set `SECRET_TEST_LEGACY_HELPER` to the path of a compatible helper.
 
 To exercise the GUI's real process client without an installed CLI:
 
@@ -29,7 +29,7 @@ fresh_home="$(mktemp -d)"
 build/HelperClientSmoke "$PWD/build/Secret.app" "$fresh_home"
 ```
 
-All automated checks use disposable fixtures. Native UI tests can set `SECRETS_FILE` and `SECRET_BACKUP_DIR` in a separate test bundle's environment. Omit `SECRET_HELPER_PATH` to test the actual bundled helper. Never put real credentials in a screenshot or test fixture.
+All automated checks use disposable fixtures. Native UI tests can set `SECRETS_FILE` and `SECRET_BACKUP_DIR` in a separate test bundle's environment. The app always uses its bundled helper. Never put real credentials in a screenshot or test fixture.
 
 ## Package
 
@@ -37,7 +37,7 @@ Packaging uses Python 3.10 or later and the small `ds-store` build dependency to
 
 ```sh
 python3 -m venv build/packaging-venv
-build/packaging-venv/bin/pip install -r packaging/requirements.txt
+build/packaging-venv/bin/pip install --only-binary=:all: -r packaging/requirements.txt
 SECRET_PACKAGING_PYTHON="$PWD/build/packaging-venv/bin/python" ./scripts/package.sh
 /usr/bin/python3 scripts/verify-release.py build/release
 ```

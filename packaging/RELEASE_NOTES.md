@@ -1,4 +1,11 @@
-Secret is a small native Mac app for finding, copying and saving local envs.
+Secret is a native Mac app for finding, copying and editing variables in your local `~/.env` file.
+
+### Changes in 2.0.0
+
+- Copy, reveal, edit and export use the same parser for quoted values, inline comments and `export NAME=value` lines. Ambiguous values produce an error.
+- The CLI's `--export` command now prints shell-quoted exports from the selected env file. Scripts that used shell evaluation or inherited variables need to be updated.
+- Saves preserve inline comments and stay within the 2 MiB file limit.
+- The editor uses a separate reveal preview with a copy button that clears the clipboard after 60 seconds.
 
 ### Download
 

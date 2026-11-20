@@ -17,10 +17,13 @@ def run(arguments, **options):
 
 release = Path(sys.argv[1]).resolve()
 version = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
+unchecked = {"Secret.dmg", "Secret.zip", "secret-cli-universal.tar.gz"}
 for line in (release / "SHA256SUMS.txt").read_text().splitlines():
     expected, name = line.split("  ", 1)
-    assert name == Path(name).name, "Checksum file contains an unexpected path"
+    assert name in unchecked, "Checksum file contains an unexpected or repeated entry"
     assert hashlib.sha256((release / name).read_bytes()).hexdigest() == expected, "Checksum mismatch"
+    unchecked.remove(name)
+assert not unchecked, "Checksum file is missing an asset"
 
 with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
     root = Path(temporary)
@@ -34,8 +37,11 @@ with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
     assert info["CFBundleShortVersionString"] == version
     assert info["LSMinimumSystemVersion"] == "14.0"
     assert "LSEnvironment" not in info, "Fixture environment leaked into release"
-    run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)])
-    for binary in (app / "Contents/MacOS/Secret", app / "Contents/Helpers/secret"):
+    run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--all-architectures", str(app)])
+    binary_paths = ["Contents/MacOS/Secret", "Contents/Helpers/secret"]
+    shipped_files = binary_paths + ["Contents/Info.plist", "Contents/Resources/Secret.icns",
+                                    "Contents/_CodeSignature/CodeResources"]
+    for binary in (app / relative for relative in binary_paths):
         architectures = set(run(["/usr/bin/lipo", "-archs", str(binary)]).decode().split())
         assert architectures == {"arm64", "x86_64"}, "Release is not universal"
         dependencies = run(["/usr/bin/otool", "-L", str(binary)]).decode().lower()
@@ -54,6 +60,10 @@ with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
         assert set(contents.getnames()) == {"secret", "LICENSE", "README.md"}
         native = contents.extractfile("secret").read()
         assert hashlib.sha256(native).digest() == hashlib.sha256(Path(helper).read_bytes()).digest()
+    standalone = root / "secret-standalone"
+    standalone.write_bytes(native)
+    standalone.chmod(0o700)
+    assert run([str(standalone), "FRESH_INSTALL"], env=environment) == value
     mount = root / "mounted"
     mount.mkdir()
     run(["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(release / "Secret.dmg")])
@@ -63,7 +73,10 @@ with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
         assert os.readlink(str(mount / "Applications")) == "/Applications"
         assert (mount / ".DS_Store").is_file()
         assert (mount / "Read Me.html").is_file()
-        run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(mount / "Secret.app")])
+        mounted_app = mount / "Secret.app"
+        run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--all-architectures", str(mounted_app)])
+        for relative in shipped_files:
+            assert (mounted_app / relative).read_bytes() == (app / relative).read_bytes(), "DMG and ZIP contain different builds"
     finally:
         run(["/usr/bin/hdiutil", "detach", str(mount)])
-print(json.dumps({"version": version, "checksums": "passed", "fresh_install": "passed", "universal_binaries": "passed", "python_runtime_required": False, "disk_image": "passed", "developer_id_signed": False, "notarised": False}))
+print(json.dumps({"version": version, "checksums": "passed", "fresh_helper_save": "passed", "standalone_cli": "passed", "universal_binaries": "passed", "python_runtime_required": False, "disk_image": "passed"}))

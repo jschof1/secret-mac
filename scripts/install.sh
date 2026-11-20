@@ -33,6 +33,7 @@ install_stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 if [[ -e "$bin_dir/secret" || -L "$bin_dir/secret" ]]; then
   cp -p "$bin_dir/secret" "$backup_dir/secret-helper-$install_stamp"
   chmod 600 "$backup_dir/secret-helper-$install_stamp"
+  printf 'Replacing the existing CLI. Version 2 --export reads literal assignments only. See docs/cli.md.\n'
 fi
 if [[ -e "$apps_dir/Secret.app" || -L "$apps_dir/Secret.app" ]]; then
   /usr/bin/ditto "$apps_dir/Secret.app" "$backup_dir/Secret-$install_stamp.app"

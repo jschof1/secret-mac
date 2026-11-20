@@ -19,12 +19,10 @@ struct HelperClientSmoke {
         _ = try await client.run(["--set", "FRESH", "--expected", first.revision], input: large)
         let after = try await client.inspect("FRESH")
         guard after.value == large else { throw HelperFailure(message: "Large value did not round-trip.") }
-        let override = home.appendingPathComponent("override-helper")
-        try FileManager.default.copyItem(at: URL(fileURLWithPath: client.path), to: override)
         var overridden = environment
-        overridden["SECRET_HELPER_PATH"] = override.path
-        let overrideClient = HelperClient(bundleURL: home.appendingPathComponent("missing.app"), environment: overridden)
-        guard try await overrideClient.inspect("FRESH").value == large else { throw HelperFailure(message: "Fixture helper override failed.") }
+        overridden["SECRET_HELPER_PATH"] = home.appendingPathComponent("missing-helper").path
+        let bundledClient = HelperClient(bundleURL: bundle, environment: overridden)
+        guard try await bundledClient.inspect("FRESH").value == large else { throw HelperFailure(message: "The app must always use its bundled helper.") }
         guard !FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/secret").path) else {
             throw HelperFailure(message: "The app must not install a CLI automatically.")
         }

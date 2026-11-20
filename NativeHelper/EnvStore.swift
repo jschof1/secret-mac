@@ -2,6 +2,12 @@ import Darwin
 import Foundation
 
 enum EnvStore {
+    enum SaveResult: String {
+        case unchanged = "Unchanged"
+        case saved = "Saved"
+        case savedWithWarning = "Saved. The containing folder could not be synced. Check the file before relying on the change."
+    }
+
     static var home: String { ProcessInfo.processInfo.environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path }
 
     static var path: String {
@@ -94,40 +100,47 @@ enum EnvStore {
         guard fsync(descriptor) == 0 else { throw SystemFailure() }
     }
 
-    static func privateDirectory(_ path: String) throws {
-        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        var details = stat()
-        guard lstat(path, &details) == 0, (details.st_mode & S_IFMT) == S_IFDIR, details.st_uid == geteuid() else {
-            throw SecretFailure("The backup folder must be a folder owned by you.")
-        }
-        guard chmod(path, 0o700) == 0 else { throw SystemFailure() }
-    }
-
     static func backup(_ document: EnvSnapshot) throws {
         let configured = ProcessInfo.processInfo.environment["SECRET_BACKUP_DIR"]
         let directory = configured?.isEmpty == false ? configured! : home + "/Library/Application Support/Secret/Backups"
-        try privateDirectory(directory)
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let folder = Darwin.open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard folder >= 0 else { throw SecretFailure("Cannot open the backup folder. Use a folder owned by you.") }
+        defer { Darwin.close(folder) }
+        var details = stat()
+        guard fstat(folder, &details) == 0, details.st_uid == geteuid(), fchmod(folder, 0o700) == 0 else {
+            throw SecretFailure("The backup folder must be private and owned by you.")
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyyMMdd'T'HHmmss.SSS'Z'"
-        let filename = directory + "/env-" + formatter.string(from: Date()) + "-" + UUID().uuidString.lowercased() + ".bak"
-        let descriptor = Darwin.open(filename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let filename = "env-" + formatter.string(from: Date()) + "-" + UUID().uuidString.lowercased() + ".bak"
+        let descriptor = openat(folder, filename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw SystemFailure() }
         defer { Darwin.close(descriptor) }
-        guard fchmod(descriptor, 0o600) == 0 else { throw SystemFailure() }
-        try write(document.data, descriptor: descriptor)
+        do {
+            guard fchmod(descriptor, 0o600) == 0 else { throw SystemFailure() }
+            try write(document.data, descriptor: descriptor)
+            guard fsync(folder) == 0 else { throw SystemFailure() }
+        } catch {
+            unlinkat(folder, filename, 0)
+            throw error
+        }
     }
 
-    static func save(_ requested: String, name: String, value: String, adding: Bool, expected: String) throws -> Bool {
+    static func save(_ requested: String, name: String, value: String, adding: Bool, expected: String) throws -> SaveResult {
         let initial = try snapshot(requested)
         let parent = URL(fileURLWithPath: initial.target).deletingLastPathComponent().path
+        let directory = Darwin.open(parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { throw SystemFailure() }
+        defer { Darwin.close(directory) }
         var parentDetails = stat()
-        guard lstat(parent, &parentDetails) == 0 else { throw SystemFailure() }
-        guard parentDetails.st_uid == geteuid(), (parentDetails.st_mode & S_IFMT) == S_IFDIR else {
-            throw SecretFailure("The env folder must be owned by you.")
+        guard fstat(directory, &parentDetails) == 0 else { throw SystemFailure() }
+        guard parentDetails.st_uid == geteuid(), (parentDetails.st_mode & 0o022) == 0 else {
+            throw SecretFailure("The env folder must be owned by you and writable only by you.")
         }
-        let lock = Darwin.open(initial.target + ".secret.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let lock = Darwin.open(initial.target + ".secret.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
         guard lock >= 0 else { throw SystemFailure() }
         defer { Darwin.close(lock) }
         var lockDetails = stat()
@@ -143,8 +156,11 @@ enum EnvStore {
         guard document.target == initial.target, document.revision == expected else {
             throw SecretFailure("The env file changed. Cancel, reload and try again.")
         }
-        let updated = try EnvDocument.replacement(document, name: name, value: value, adding: adding)
-        if updated == document.data { return false }
+        let updated = try EnvDocument(document, writable: true).replacement(document, name: name, value: value, adding: adding)
+        if updated == document.data { return .unchanged }
+        guard updated.count <= EnvDocument.maxFileBytes else {
+            throw SecretFailure("This change would make the env file too large.")
+        }
         var template = Array((parent + "/.secret-XXXXXX").utf8CString)
         let descriptor = mkstemp(&template)
         guard descriptor >= 0 else { throw SystemFailure() }
@@ -165,10 +181,6 @@ enum EnvStore {
             throw SecretFailure("The env file changed. Cancel, reload and try again.")
         }
         guard rename(temporary, document.target) == 0 else { throw SystemFailure() }
-        let directory = Darwin.open(parent, O_RDONLY | O_CLOEXEC)
-        guard directory >= 0 else { throw SystemFailure() }
-        defer { Darwin.close(directory) }
-        guard fsync(directory) == 0 else { throw SystemFailure() }
-        return true
+        return fsync(directory) == 0 ? .saved : .savedWithWarning
     }
 }

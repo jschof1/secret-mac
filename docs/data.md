@@ -8,8 +8,10 @@ Each changed save makes a private backup in `~/Library/Application Support/Secre
 
 Saves preserve unrelated lines, comments and ordering. They use a private temporary file, an atomic rename, a revision check and a nonblocking lock. The private `.secret.lock` file remains next to the env file. The final revision check detects external changes made before replacement; arbitrary editors do not share the lock, so it is not a transactional guarantee against every writer.
 
-Symlinks to owned regular files retain their links. Extended attributes are preserved. Hard-linked files, duplicate target names, ambiguous shell scripts and multiline values are refused. Files with Windows line endings remain read-only until converted to LF in a text editor.
+Secret manages uppercase variable names in literal, single-line assignments, including indented lines and `export NAME=value`. It preserves the assignment prefix and inline comment when editing. Shell expressions and multiline values produce an error with the first unsupported line number. Files with Windows line endings can be read and must be converted to LF before editing.
 
-Values copied with the app's copy controls clear after 60 seconds or on app exit, if another app has not changed the clipboard. Concealed and transient clipboard flags are advisory. Revealed values hide when the app loses focus or the selection changes.
+Symlinks to owned regular files retain their links, and extended attributes are preserved. Saves require an owned folder with group and other write permissions disabled. Hard-linked files and duplicate target names are refused. The file limit is 2 MiB, and new values may be up to 64 KiB.
+
+Values copied with the app's copy controls clear after 60 seconds or on app exit, if another app has not changed the clipboard. Concealed and transient clipboard flags are advisory. The editor keeps input masked and shows a separate preview when you reveal a value. Revealed values hide when the app loses focus or the selection changes.
 
 Existing terminal sessions keep envs they have already loaded. The app does not inject new values into running processes.

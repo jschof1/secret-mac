@@ -33,9 +33,9 @@ struct ContentView: View {
             if model.filtered.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
-                    Text(model.loading ? "Loading…" : model.query.isEmpty ? "No envs" : "No matches")
+                    Text(model.loading ? "Loading…" : model.error != nil ? "Couldn’t load envs" : model.query.isEmpty ? "No envs" : "No matches")
                         .foregroundStyle(.secondary)
-                    if model.query.isEmpty && !model.loading {
+                    if model.query.isEmpty && !model.loading && model.error == nil {
                         Button("New env", action: model.add)
                     }
                     Spacer()
@@ -65,7 +65,9 @@ struct ContentView: View {
             HStack {
                 Text(model.location)
                 Spacer()
-                Text(model.copiedName == nil ? "\(model.filtered.count) \(model.filtered.count == 1 ? "env" : "envs")" : "Copied")
+                Text(model.copiedName.map { "Copied \($0)" } ?? "\(model.filtered.count) \(model.filtered.count == 1 ? "env" : "envs")")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
@@ -185,10 +187,7 @@ struct EditorView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Text("Value").font(.callout).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
-                    Group {
-                        if revealed { TextField("Value", text: $value) }
-                        else { SecureField("Value", text: $value) }
-                    }
+                    SecureField("Value", text: $value)
                     .font(.system(.body, design: .monospaced))
                     .textFieldStyle(.roundedBorder)
                     .focused($focus, equals: .value)
@@ -196,12 +195,26 @@ struct EditorView: View {
                     .privacySensitive()
                     .accessibilityIdentifier("env-value")
                     .onSubmit { save() }
-                    Button { revealed.toggle(); focus = .value } label: {
+                    Button { revealed.toggle() } label: {
                         Image(systemName: revealed ? "eye.slash" : "eye").frame(width: 24)
                     }
                     .buttonStyle(.plain)
                     .help(revealed ? "Hide value" : "Reveal value")
                     .accessibilityLabel(revealed ? "Hide value" : "Reveal value")
+                }
+                if revealed {
+                    HStack(alignment: .top) {
+                        ScrollView {
+                            Text(verbatim: value)
+                                .font(.system(.body, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.disabled)
+                                .privacySensitive()
+                        }
+                        .frame(maxHeight: 84)
+                        Button("Copy value") { SecretClipboard.shared.copy(value) }
+                            .disabled(value.isEmpty)
+                    }
                 }
             }
             if let error { Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }

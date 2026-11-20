@@ -55,7 +55,8 @@ enum SecretCommand {
             index += 1
         }
         if let mutation {
-            guard let expected, EnvDocument.matches("[0-9a-f]{64}", expected) != nil else {
+            guard let expected, expected.utf8.count == 64,
+                  expected.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
                 throw SecretFailure("Read --revision before saving and pass it with --expected.")
             }
             return .save(name: mutation.0, adding: mutation.1, expected: expected)
@@ -75,46 +76,41 @@ enum SecretCommand {
             --list, -l     List env names.
             --json, -j     List names as JSON, without values.
             --check        Check whether the env file can be saved.
-            --export, -e   Source the env file and print exported values (legacy).
+            --export, -e   Print shell-quoted exports for literal uppercase assignments.
             --help, -h     Show usage.
             """)
             return
         }
         let path = EnvStore.path
-        if case .export = self {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", "set -euo pipefail; set -a; . \"$1\"; set +a; env | grep -E \"^[A-Z0-9_]+=\" | sort", "secret", path]
-            try process.run()
-            process.waitUntilExit()
-            Darwin.exit(process.terminationStatus)
-        }
         let document = try EnvStore.snapshot(path)
         switch self {
         case let .names(json):
-            let names = try EnvDocument.names(document)
-            if json { try Self.json(names, pretty: true) }
+            let names = try EnvDocument(document).names
+            if json { try Self.json(names) }
             else if !names.isEmpty { print(names.joined(separator: "\n")) }
         case let .value(name):
-            FileHandle.standardOutput.write(Data(try EnvDocument.value(document, name: name).utf8))
+            FileHandle.standardOutput.write(Data(try EnvDocument(document).value(named: name).utf8))
         case let .inspect(name):
-            try Self.json(["name": name, "value": try EnvDocument.value(document, name: name, allowEmpty: true), "revision": document.revision])
+            try Self.json(["name": name, "value": try EnvDocument(document).value(named: name, allowEmpty: true), "revision": document.revision])
         case .revision: print(document.revision)
         case .check:
-            _ = try EnvDocument.validate(document)
+            _ = try EnvDocument(document, writable: true)
             print("OK")
         case let .save(name, adding, expected):
             let data = try EnvStore.read(STDIN_FILENO, maximum: EnvDocument.maxValueBytes + 1)
             guard data.count <= EnvDocument.maxValueBytes else { throw SecretFailure("The value is too long.") }
             guard String(data: data, encoding: .utf8) != nil else { throw SecretFailure("The value must be UTF-8 text.") }
             let value = String(decoding: data, as: UTF8.self)
-            print(try EnvStore.save(path, name: name, value: value, adding: adding, expected: expected) ? "Saved" : "Unchanged")
-        case .export, .help: break
+            print(try EnvStore.save(path, name: name, value: value, adding: adding, expected: expected).rawValue)
+        case .export:
+            guard document.identity != "missing" else { throw SecretFailure("The env file does not exist.") }
+            FileHandle.standardOutput.write(Data(try EnvDocument(document).exportedValues().utf8))
+        case .help: break
         }
     }
 
-    static func json(_ value: Any, pretty: Bool = false) throws {
-        var data = try JSONSerialization.data(withJSONObject: value, options: pretty ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes] : [.sortedKeys, .withoutEscapingSlashes])
+    static func json(_ value: Any) throws {
+        var data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
         data.append(10)
         FileHandle.standardOutput.write(data)
     }

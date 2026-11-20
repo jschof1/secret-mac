@@ -21,159 +21,158 @@ struct EnvSnapshot {
         digest.update(data: data)
         return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
-
-    func lines() throws -> [String] {
-        guard String(data: data, encoding: .utf8) != nil else {
-            throw SecretFailure("The env file is not UTF-8. Edit it in a text editor.")
-        }
-        return String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
-    }
 }
 
-enum EnvDocument {
+struct EnvDocument {
     static let maxFileBytes = 2 * 1024 * 1024
     static let maxValueBytes = 64 * 1024
-    private static let bare = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+,=~^-".unicodeScalars)
-    private static let shellBare = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+,=-".unicodeScalars)
+    private static let bare = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+,=#^-".unicodeScalars)
+    private static let assignment = try! NSRegularExpression(pattern: "([ \\t]*(?:export[ \\t]+)?([A-Za-z_][A-Za-z0-9_]*)=)(.*)", options: .dotMatchesLineSeparators)
+    private static let managedName = try! NSRegularExpression(pattern: "[A-Z_][A-Z0-9_]*")
+    private static let doubleQuoteEscapes = Set("$`\"\\\\".unicodeScalars)
 
-    static func matches(_ expression: String, _ input: String) -> [String]? {
-        guard let regex = try? NSRegularExpression(pattern: expression, options: .dotMatchesLineSeparators),
-              let match = regex.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)),
-              match.range.length == input.utf16.count else { return nil }
-        return (0..<match.numberOfRanges).map { index in
-            guard let range = Range(match.range(at: index), in: input) else { return "" }
-            return String(input[range])
+    struct Entry {
+        let lineNumber: Int
+        let name: String
+        let prefix: String
+        let value: String
+        let suffix: String
+    }
+
+    let lines: [String]
+    let entries: [Entry]
+
+    init(_ snapshot: EnvSnapshot, writable: Bool = false) throws {
+        guard !snapshot.data.contains(0), !snapshot.data.starts(with: [0xef, 0xbb, 0xbf]),
+              let text = String(data: snapshot.data, encoding: .utf8) else {
+            throw SecretFailure("The env file must be UTF-8 text without a byte order mark.")
         }
+        let lineFeedText = writable ? text : text.replacingOccurrences(of: "\r\n", with: "\n")
+        guard !lineFeedText.unicodeScalars.contains("\r") else {
+            throw SecretFailure("Convert the env file to LF line endings in a text editor before continuing.")
+        }
+        lines = lineFeedText.components(separatedBy: "\n")
+        var parsed: [Entry] = []
+        for (index, line) in lines.enumerated() {
+            let content = line.unicodeScalars.drop(while: { $0 == " " || $0 == "\t" })
+            if content.isEmpty || content.first == "#" { continue }
+            let range = NSRange(line.startIndex..., in: line)
+            guard let match = Self.assignment.firstMatch(in: line, range: range), match.range == range,
+                  let prefixRange = Range(match.range(at: 1), in: line),
+                  let nameRange = Range(match.range(at: 2), in: line),
+                  let rawRange = Range(match.range(at: 3), in: line),
+                  let literal = Self.parseLiteral(line[rawRange]) else {
+                throw SecretFailure("Line \(index + 1) is not a literal assignment. Edit it in a text editor.")
+            }
+            parsed.append(Entry(lineNumber: index, name: String(line[nameRange]),
+                                prefix: String(line[prefixRange]), value: literal.value, suffix: literal.suffix))
+        }
+        entries = parsed
     }
 
-    static func entry(_ line: String) -> (name: String, raw: String)? {
-        guard let fields = matches("([A-Z0-9_]+)=(.*)", line) else { return nil }
-        return (fields[1], fields[2])
-    }
-
-    static func names(_ snapshot: EnvSnapshot) throws -> [String] {
-        try snapshot.lines().compactMap { entry($0)?.name }
-    }
-
-    static func decode(_ raw: String) -> String {
-        guard raw.first == "'" || raw.first == "\"" else { return raw }
-        let input = Array(raw.unicodeScalars)
-        var result = String.UnicodeScalarView()
+    private static func parseLiteral(_ raw: Substring) -> (value: String, suffix: String)? {
+        let input = raw.unicodeScalars
+        var value = String.UnicodeScalarView()
         var quote: UnicodeScalar?
-        var position = 0
-        while position < input.count {
+        var position = input.startIndex
+        while position != input.endIndex {
             let character = input[position]
-            if quote == "'" {
+            let next = input.index(after: position)
+            switch quote {
+            case "'":
                 if character == "'" { quote = nil }
-                else { result.append(character) }
-            } else if quote == "\"" {
+                else { value.append(character) }
+            case "\"":
                 if character == "\"" { quote = nil }
-                else if character == "\\", position + 1 < input.count, Set("$`\"\\".unicodeScalars).contains(input[position + 1]) {
-                    position += 1
-                    result.append(input[position])
-                } else if character == "$" || character == "`" { return raw }
-                else { result.append(character) }
-            } else if character == "'" || character == "\"" {
-                quote = character
-            } else if bare.contains(character) {
-                result.append(character)
-            } else { return raw }
-            position += 1
+                else if character == "\\", next != input.endIndex, doubleQuoteEscapes.contains(input[next]) {
+                    value.append(input[next])
+                    position = input.index(after: next)
+                    continue
+                } else if character == "$" || character == "`" { return nil }
+                else { value.append(character) }
+            default:
+                if character == "'" || character == "\"" { quote = character }
+                else if character == " " || character == "\t" {
+                    let suffix = input[position...]
+                    let comment = suffix.drop(while: { $0 == " " || $0 == "\t" })
+                    guard comment.isEmpty || comment.first == "#" else { return nil }
+                    return (String(value), String(suffix))
+                } else if bare.contains(character) { value.append(character) }
+                else { return nil }
+            }
+            position = next
         }
-        return quote == nil ? String(result) : raw
+        return quote == nil ? (String(value), "") : nil
     }
 
-    static func value(_ snapshot: EnvSnapshot, name: String, allowEmpty: Bool = false) throws -> String {
-        guard matches("[A-Z0-9_]+", name) != nil else {
-            throw SecretFailure("Use an env name containing uppercase letters, numbers and underscores.")
-        }
-        for line in try snapshot.lines() {
-            if let assignment = entry(line), assignment.name == name {
-                let value = decode(assignment.raw)
-                if !value.isEmpty || allowEmpty { return value }
-                break
-            }
-        }
-        throw SecretFailure("Env not found or empty.")
+    static func isManagedName(_ name: String) -> Bool {
+        let range = NSRange(name.startIndex..., in: name)
+        return managedName.firstMatch(in: name, range: range)?.range == range
     }
 
-    static func simpleValue(_ raw: String) -> Bool {
-        let input = Array(raw.unicodeScalars)
-        var quote: UnicodeScalar?
-        var escaped = false
-        for (index, character) in input.enumerated() {
-            if escaped { escaped = false; continue }
-            if quote == "'" {
-                if character == "'" { quote = nil }
-                continue
-            }
-            if quote == "\"" {
-                if character == "\"" { quote = nil }
-                else if character == "\\" { escaped = true }
-                else if character == "$" || character == "`" { return false }
-                continue
-            }
-            if character == "'" || character == "\"" { quote = character }
-            else if character == " " || character == "\t" {
-                let tail = String(String.UnicodeScalarView(input[index...])).drop(while: { $0 == " " || $0 == "\t" })
-                return tail.isEmpty || tail.first == "#"
-            } else if !bare.contains(character) { return false }
-        }
-        return quote == nil && !escaped
+    var names: [String] {
+        var seen: Set<String> = []
+        return entries.map(\.name).filter { Self.isManagedName($0) && seen.insert($0).inserted }
     }
 
-    static func validate(_ snapshot: EnvSnapshot) throws -> [String] {
-        guard !snapshot.data.contains(0), !snapshot.data.starts(with: [0xef, 0xbb, 0xbf]) else {
-            throw SecretFailure("The env file has an unsupported format. Edit it in a text editor.")
+    func entry(named name: String) throws -> Entry? {
+        guard Self.isManagedName(name) else {
+            throw SecretFailure("Use uppercase letters, numbers and underscores. Start with a letter or underscore.")
         }
-        guard !snapshot.data.contains(13) else {
-            throw SecretFailure("The env file uses Windows line endings. Convert it to LF in a text editor before saving.")
-        }
-        let lines = try snapshot.lines()
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty || trimmed.first == "#" { continue }
-            guard let assignment = matches("[ \\t]*(?:export[ \\t]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)", line), simpleValue(assignment[2]) else {
-                throw SecretFailure("The env file has shell syntax or a multiline value. Edit it in a text editor.")
+        var result: Entry?
+        for entry in entries where entry.name == name {
+            guard result == nil else {
+                throw SecretFailure("This name appears more than once. Resolve the duplicates in a text editor.")
             }
+            result = entry
         }
-        return lines
+        return result
     }
 
-    static func shellLiteral(_ value: String) -> String {
-        if !value.isEmpty && value.unicodeScalars.allSatisfy({ shellBare.contains($0) }) { return value }
+    func value(named name: String, allowEmpty: Bool = false) throws -> String {
+        guard let entry = try entry(named: name), allowEmpty || !entry.value.isEmpty else {
+            throw SecretFailure("Env not found or empty.")
+        }
+        return entry.value
+    }
+
+    func exportedValues() throws -> String {
+        var values: [String: String] = [:]
+        for entry in entries where Self.isManagedName(entry.name) {
+            guard values[entry.name] == nil else {
+                throw SecretFailure("An env name appears more than once. Resolve the duplicates in a text editor.")
+            }
+            values[entry.name] = entry.value
+        }
+        return values.sorted { $0.key < $1.key }.map { "export \($0.key)=\(Self.shellLiteral($0.value))\n" }.joined()
+    }
+
+    private static func shellLiteral(_ value: String) -> String {
+        if !value.isEmpty && value.unicodeScalars.allSatisfy({ bare.contains($0) && $0 != "#" && $0 != "^" }) { return value }
         return "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
-    static func replacement(_ snapshot: EnvSnapshot, name: String, value: String, adding: Bool) throws -> Data {
-        guard name.utf8.count <= 255, matches("[A-Z_][A-Z0-9_]*", name) != nil else {
-            throw SecretFailure("Use uppercase letters, numbers and underscores. Start with a letter or underscore.")
+    func replacement(_ snapshot: EnvSnapshot, name: String, value: String, adding: Bool) throws -> Data {
+        guard name.utf8.count <= 255, Self.isManagedName(name) else {
+            throw SecretFailure("Use up to 255 uppercase letters, numbers and underscores. Start with a letter or underscore.")
         }
         guard !value.isEmpty, !value.unicodeScalars.contains(where: { $0 == "\0" || $0 == "\r" || $0 == "\n" }) else {
             throw SecretFailure("Enter a value on one line.")
         }
-        guard value.utf8.count <= maxValueBytes else { throw SecretFailure("The value is too long.") }
-        var lines = try validate(snapshot)
-        let regex = try NSRegularExpression(pattern: "^[ \\t]*(?:export[ \\t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \\t]*=")
-        let positions = lines.indices.filter { index in
-            let line = lines[index]
-            guard let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)), let range = Range(match.range(at: 1), in: line) else { return false }
-            return line[range] == name
-        }
-        guard positions.count <= 1 else { throw SecretFailure("This name appears more than once. Resolve the duplicates in a text editor.") }
-        if adding && !positions.isEmpty { throw SecretFailure("This env already exists. Use Edit to change it.") }
-        if !adding {
-            guard let position = positions.first, let current = entry(lines[position]) else {
-                throw SecretFailure("This env is no longer available. Reload and try again.")
-            }
-            if Array(decode(current.raw).utf8) == Array(value.utf8) { return snapshot.data }
-        }
-        let assignment = name + "=" + shellLiteral(value)
+        guard value.utf8.count <= Self.maxValueBytes else { throw SecretFailure("The value is too long.") }
+        let current = try entry(named: name)
+        let literal = Self.shellLiteral(value)
         if adding {
-            let text = String(decoding: snapshot.data, as: UTF8.self)
-            return Data((text + (text.isEmpty || text.hasSuffix("\n") ? "" : "\n") + assignment + "\n").utf8)
+            guard current == nil else { throw SecretFailure("This env already exists. Use Edit to change it.") }
+            var updated = snapshot.data
+            if !updated.isEmpty, updated.last != 10 { updated.append(10) }
+            updated.append(contentsOf: "\(name)=\(literal)\n".utf8)
+            return updated
         }
-        lines[positions[0]] = assignment
-        return Data(lines.joined(separator: "\n").utf8)
+        guard let current else { throw SecretFailure("This env is no longer available. Reload and try again.") }
+        if current.value.utf8.elementsEqual(value.utf8) { return snapshot.data }
+        var updated = lines
+        updated[current.lineNumber] = current.prefix + literal + current.suffix
+        return Data(updated.joined(separator: "\n").utf8)
     }
 }

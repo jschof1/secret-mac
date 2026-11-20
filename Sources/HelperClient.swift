@@ -38,7 +38,7 @@ struct HelperClient: Sendable {
     let environment: [String: String]
 
     init(bundleURL: URL = Bundle.main.bundleURL, environment current: [String: String] = ProcessInfo.processInfo.environment) {
-        path = current["SECRET_HELPER_PATH"] ?? bundleURL.appendingPathComponent("Contents/Helpers/secret").path
+        path = bundleURL.appendingPathComponent("Contents/Helpers/secret").path
         var filtered = ["HOME": current["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path, "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
         for key in ["SECRETS_FILE", "SECRET_BACKUP_DIR"] {
             if let value = current[key] { filtered[key] = value }
@@ -74,9 +74,12 @@ struct HelperClient: Sendable {
         let stdout = PipeDrain()
         let stderr = PipeDrain()
         let drains = DispatchGroup()
+        // Compact name JSON needs at most 4 bytes per 3-byte assignment. Inspect
+        // can escape a file-sized value at up to 6 bytes per input byte.
+        let outputLimit = arguments.first == "--inspect" ? 13 * 1024 * 1024 : 3 * 1024 * 1024
         drains.enter()
         DispatchQueue.global().async {
-            stdout.collect(output.fileHandleForReading, limit: 2_100_000, process: process)
+            stdout.collect(output.fileHandleForReading, limit: outputLimit, process: process)
             drains.leave()
         }
         drains.enter()
