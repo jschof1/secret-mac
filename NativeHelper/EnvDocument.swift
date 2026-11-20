@@ -29,7 +29,7 @@ struct EnvDocument {
     private static let bare = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+,=#^-".unicodeScalars)
     private static let assignment = try! NSRegularExpression(pattern: "([ \\t]*(?:export[ \\t]+)?([A-Za-z_][A-Za-z0-9_]*)=)(.*)", options: .dotMatchesLineSeparators)
     private static let managedName = try! NSRegularExpression(pattern: "[A-Z_][A-Z0-9_]*")
-    private static let reference = try! NSRegularExpression(pattern: #"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})|~"#)
+    private static let reference = try! NSRegularExpression(pattern: #"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})|~|^=|(?<=:)="#)
     private static let doubleQuoteEscapes = Set("$`\"\\\\".unicodeScalars)
 
     struct Entry {
@@ -110,6 +110,7 @@ struct EnvDocument {
                 else { value.append(character) }
             default:
                 if character == "'" || character == "\"" { quote = character }
+                else if character == "=", value.isEmpty || value.last == ":" { return nil }
                 else if character == " " || character == "\t" {
                     let suffix = input[position...]
                     let comment = suffix.drop(while: { $0 == " " || $0 == "\t" })
@@ -173,7 +174,9 @@ struct EnvDocument {
     }
 
     private static func shellLiteral(_ value: String) -> String {
-        if !value.isEmpty && value.unicodeScalars.allSatisfy({ bare.contains($0) && $0 != "#" && $0 != "^" }) { return value }
+        // zsh can expand an unquoted equals sign at the start or after a colon.
+        if !value.isEmpty, !value.hasPrefix("="), !value.contains(":="),
+           value.unicodeScalars.allSatisfy({ bare.contains($0) && $0 != "#" && $0 != "^" }) { return value }
         return "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 

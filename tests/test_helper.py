@@ -187,6 +187,22 @@ class HelperTests(unittest.TestCase):
         self.write(b'FIRST="begins $HOME\nSECOND=part_of_first"\n')
         self.assertEqual(self.run_helper("--json", success=False).stdout, b"")
 
+    @unittest.skipUnless(Path("/bin/zsh").exists(), "zsh unavailable")
+    def test_equals_are_literal_in_zsh_assignment_and_export(self):
+        self.write(b"FIRST=fixture\nAMBIGUOUS=prefix:=ls\n")
+        self.assertEqual(json.loads(self.run_helper("--status").stdout), {"names": ["FIRST"], "skipped": 1})
+        self.run_helper("AMBIGUOUS", success=False)
+        self.write(b"")
+        for name, value in [("LEADING", "=ls"), ("AFTER_COLON", "prefix:=ls"), ("PADDING", "value==")]:
+            self.save(name, value)
+            self.assertEqual(self.run_helper(name).stdout, value.encode())
+        exported = self.root / "exports.sh"
+        exported.write_bytes(self.run_helper("--export").stdout)
+        for source in (self.envfile, exported):
+            shell = subprocess.run(["/bin/zsh", "-f", "-c", '. "$1"; printf "%s\\n" "$LEADING" "$AFTER_COLON" "$PADDING"', "fixture", str(source)],
+                                   env=self.environment, capture_output=True, check=True, timeout=5)
+            self.assertEqual(shell.stdout, b"=ls\nprefix:=ls\nvalue==\n")
+
     @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
     def test_native_matches_reference_literal_reads_and_revision(self):
         self.write(b"# fixture\nFIRST='one'\nSECOND=raw=token\nESCAPED=\"literal\\$and\\`tick\"\n")
