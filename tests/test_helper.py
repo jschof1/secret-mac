@@ -173,11 +173,19 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(shell.stdout, b"two three\n")
         self.assertIn(b"--list", self.run_helper("--help").stdout)
 
-    def test_export_rejects_dynamic_assignments_without_output(self):
-        for data in [b"FIRST=fixture\nSECOND=\"$FIRST\"\n", b"FIRST=~/folder\n", b"FIRST=prefix:~/folder\n"]:
-            self.write(data)
-            self.assertEqual(self.run_helper("--export", success=False).stdout, b"")
-            self.assertEqual(self.run_helper("--json", success=False).stdout, b"")
+    def test_literal_reads_continue_in_a_file_with_simple_references(self):
+        data = b'export PATH="$PATH:${HOME}/bin"\nFIRST=fixture\nTILDE=prefix:~/folder\n'
+        self.write(data)
+        self.assertEqual(json.loads(self.run_helper("--status").stdout), {"names": ["FIRST"], "skipped": 2})
+        self.assertEqual(self.run_helper("FIRST").stdout, b"fixture")
+        self.run_helper("PATH", success=False)
+        self.assertEqual(self.run_helper("--export", success=False).stdout, b"")
+        self.save("FIRST", "new", adding=False, success=False)
+        self.assertEqual(self.envfile.read_bytes(), data)
+
+    def test_unclosed_quotes_do_not_expose_embedded_names(self):
+        self.write(b'FIRST="begins $HOME\nSECOND=part_of_first"\n')
+        self.assertEqual(self.run_helper("--json", success=False).stdout, b"")
 
     @unittest.skipUnless(NATIVE_HELPER, "native binary not supplied")
     def test_native_matches_reference_literal_reads_and_revision(self):

@@ -48,6 +48,7 @@ struct SecretApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New env", action: model.add).keyboardShortcut("n")
+                    .disabled(model.skippedReferences > 0)
             }
             CommandGroup(after: .pasteboard) {
                 Button("Copy value") { if let name = model.selected ?? model.filtered.first { model.copy(name) } }
@@ -55,7 +56,7 @@ struct SecretApp: App {
                     .disabled(model.selected == nil && model.filtered.isEmpty)
                 Button("Edit env…") { if let name = model.selected { model.edit(name) } }
                     .keyboardShortcut("e")
-                    .disabled(model.selected == nil)
+                    .disabled(model.selected == nil || model.skippedReferences > 0)
             }
             CommandGroup(after: .textEditing) {
                 Button("Find env") { model.focusSearch = UUID() }.keyboardShortcut("f")

@@ -2,10 +2,8 @@ import Darwin
 import Foundation
 
 enum EnvStore {
-    enum SaveResult: String {
-        case unchanged = "Unchanged"
-        case saved = "Saved"
-        case savedWithWarning = "Saved. The containing folder could not be synced. Check the file before relying on the change."
+    enum SaveResult {
+        case unchanged, saved, savedWithWarning
     }
 
     static var home: String { ProcessInfo.processInfo.environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path }

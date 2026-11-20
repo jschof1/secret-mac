@@ -3,6 +3,7 @@ import Foundation
 
 enum SecretCommand {
     case names(json: Bool)
+    case status
     case value(String)
     case inspect(String)
     case revision
@@ -31,6 +32,7 @@ enum SecretCommand {
             switch argument {
             case "--list", "-l": next = .names(json: false)
             case "--json", "-j": next = .names(json: true)
+            case "--status": next = .status
             case "--revision": next = .revision
             case "--check": next = .check
             case "--export", "-e": next = .export
@@ -88,6 +90,9 @@ enum SecretCommand {
             let names = try EnvDocument(document).names
             if json { try Self.json(names) }
             else if !names.isEmpty { print(names.joined(separator: "\n")) }
+        case .status:
+            let parsed = try EnvDocument(document)
+            try Self.json(["names": parsed.names, "skipped": parsed.skippedCount])
         case let .value(name):
             FileHandle.standardOutput.write(Data(try EnvDocument(document).value(named: name).utf8))
         case let .inspect(name):
@@ -101,7 +106,12 @@ enum SecretCommand {
             guard data.count <= EnvDocument.maxValueBytes else { throw SecretFailure("The value is too long.") }
             guard String(data: data, encoding: .utf8) != nil else { throw SecretFailure("The value must be UTF-8 text.") }
             let value = String(decoding: data, as: UTF8.self)
-            print(try EnvStore.save(path, name: name, value: value, adding: adding, expected: expected).rawValue)
+            let outcome = try EnvStore.save(path, name: name, value: value, adding: adding, expected: expected)
+            print(outcome == .unchanged ? "Unchanged" : "Saved")
+            if outcome == .savedWithWarning {
+                let warning = "Saved. The containing folder could not be synced. Check the file before relying on the change."
+                FileHandle.standardError.write(Data(("secret: " + warning + "\n").utf8))
+            }
         case .export:
             guard document.identity != "missing" else { throw SecretFailure("The env file does not exist.") }
             FileHandle.standardOutput.write(Data(try EnvDocument(document).exportedValues().utf8))

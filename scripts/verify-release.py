@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -29,7 +30,8 @@ with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
     root = Path(temporary)
     archive = release / "Secret.zip"
     with zipfile.ZipFile(archive) as contents:
-        assert not any("/.env" in name or name.endswith(".py") for name in contents.namelist()), "Unexpected data or Python source in app"
+        assert not any(any(part.startswith(".env") for part in Path(name).parts) or name.endswith(".py")
+                       for name in contents.namelist()), "Unexpected data or Python source in app"
     run(["/usr/bin/ditto", "-xk", str(archive), str(root)])
     app = root / "Secret.app"
     with (app / "Contents/Info.plist").open("rb") as handle:
@@ -54,10 +56,14 @@ with tempfile.TemporaryDirectory(prefix="secret-release-check-") as temporary:
     value = b"fixture $literal 'quote' = only"
     run([helper, "--add=FRESH_INSTALL", "--expected", revision], input=value, env=environment)
     assert run([helper, "FRESH_INSTALL"], env=environment) == value
+    expected_export = ("export FRESH_INSTALL=" + shlex.quote(value.decode()) + "\n").encode()
+    assert run([helper, "--export"], env=environment) == expected_export
     assert (root / "fresh.env").stat().st_mode & 0o777 == 0o600
     assert not (root / ".local/bin/secret").exists(), "App requires or silently installs a user helper"
     with tarfile.open(release / "secret-cli-universal.tar.gz") as contents:
         assert set(contents.getnames()) == {"secret", "LICENSE", "README.md"}
+        member = contents.getmember("secret")
+        assert member.isfile() and member.mode & 0o111 == 0o111, "Standalone helper must be executable"
         native = contents.extractfile("secret").read()
         assert hashlib.sha256(native).digest() == hashlib.sha256(Path(helper).read_bytes()).digest()
     standalone = root / "secret-standalone"

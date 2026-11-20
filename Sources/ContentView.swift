@@ -35,7 +35,7 @@ struct ContentView: View {
                     Spacer()
                     Text(model.loading ? "Loading…" : model.error != nil ? "Couldn’t load envs" : model.query.isEmpty ? "No envs" : "No matches")
                         .foregroundStyle(.secondary)
-                    if model.query.isEmpty && !model.loading && model.error == nil {
+                    if model.query.isEmpty && !model.loading && model.error == nil && model.skippedReferences == 0 {
                         Button("New env", action: model.add)
                     }
                     Spacer()
@@ -61,6 +61,15 @@ struct ContentView: View {
                 .padding(12)
                 .background(Color.red.opacity(0.07))
             }
+            if let notice = model.notice ?? (model.skippedReferences > 0
+                ? "Read-only. Secret skipped \(model.skippedReferences) \(model.skippedReferences == 1 ? "assignment" : "assignments") with shell references."
+                : nil) {
+                Text(notice)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
             Divider()
             HStack {
                 Text(model.location)
@@ -80,7 +89,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: model.add) { Label("New env", systemImage: "plus") }
-                    .disabled(model.working)
+                    .disabled(model.working || model.skippedReferences > 0)
                     .accessibilityIdentifier("new-env")
             }
         }
@@ -120,6 +129,7 @@ struct ContentView: View {
                 .accessibilityIdentifier("copy-\(name)")
                 Menu {
                     Button("Edit…") { model.selected = name; model.edit(name) }
+                        .disabled(model.skippedReferences > 0)
                     Button(model.revealed?.name == name ? "Hide value" : "Reveal value") { model.toggleReveal(name) }
                     Divider()
                     Button("Copy name") { model.copyName(name) }
@@ -145,6 +155,7 @@ struct ContentView: View {
             Button("Copy value") { model.copy(name) }
             Button("Copy name") { model.copyName(name) }
             Button("Edit…") { model.selected = name; model.edit(name) }
+                .disabled(model.skippedReferences > 0)
             Button(model.revealed?.name == name ? "Hide value" : "Reveal value") { model.toggleReveal(name) }
         }
         .onTapGesture(count: 2) { model.selected = name; model.edit(name) }
@@ -212,7 +223,10 @@ struct EditorView: View {
                                 .privacySensitive()
                         }
                         .frame(maxHeight: 84)
-                        Button("Copy value") { SecretClipboard.shared.copy(value) }
+                        Button("Copy value") {
+                            do { try SecretClipboard.shared.copy(value) }
+                            catch { self.error = error.localizedDescription }
+                        }
                             .disabled(value.isEmpty)
                     }
                 }

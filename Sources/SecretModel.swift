@@ -19,15 +19,16 @@ final class SecretClipboard {
     private var ownedChange: Int?
     private var clearTask: Task<Void, Never>?
 
-    func copy(_ value: String) {
-        clearTask?.cancel()
-        let board = NSPasteboard.general
-        board.clearContents()
+    func copy(_ value: String) throws {
         let item = NSPasteboardItem()
-        item.setString(value, forType: .string)
+        guard item.setString(value, forType: .string) else { throw HelperFailure(message: "Couldn’t copy the value.") }
         item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
         item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
-        board.writeObjects([item])
+        let board = NSPasteboard.general
+        clearTask?.cancel()
+        ownedChange = nil
+        board.prepareForNewContents(with: .currentHostOnly)
+        guard board.writeObjects([item]) else { throw HelperFailure(message: "Couldn’t copy the value.") }
         ownedChange = board.changeCount
         clearTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -53,6 +54,8 @@ final class SecretModel: ObservableObject {
     @Published var copiedName: String?
     @Published var editor: EditSession?
     @Published var error: String?
+    @Published var notice: String?
+    @Published private(set) var skippedReferences = 0
     @Published var loading = false
     @Published var working = false
     @Published var focusSearch = UUID()
@@ -79,22 +82,25 @@ final class SecretModel: ObservableObject {
         hide()
         defer { if generation == reloadGeneration { loading = false } }
         do {
-            let currentNames = try await helper.names()
+            let listing = try await helper.listing()
             guard generation == reloadGeneration else { return }
-            names = currentNames
+            names = listing.names.sorted()
+            skippedReferences = listing.skipped
             error = nil
+            notice = nil
             if let selected, !names.contains(selected) { self.selected = nil }
         } catch {
             if generation == reloadGeneration {
                 names = []
                 selected = nil
+                skippedReferences = 0
                 self.error = error.localizedDescription
             }
         }
     }
 
     func add() {
-        guard !working, editor == nil else { return }
+        guard !working, editor == nil, skippedReferences == 0 else { return }
         working = true
         Task {
             defer { working = false }
@@ -106,7 +112,7 @@ final class SecretModel: ObservableObject {
     }
 
     func edit(_ name: String) {
-        guard !working, editor == nil else { return }
+        guard !working, editor == nil, skippedReferences == 0 else { return }
         working = true
         Task {
             defer { working = false }
@@ -128,7 +134,7 @@ final class SecretModel: ObservableObject {
                 guard generation == copyGeneration else { return }
                 guard NSPasteboard.general.changeCount == previousClipboardChange else { return }
                 guard !record.value.isEmpty else { throw HelperFailure(message: "This env is empty. Use Edit to add a value.") }
-                SecretClipboard.shared.copy(record.value)
+                try SecretClipboard.shared.copy(record.value)
                 copiedName = name
                 error = nil
                 feedback?.cancel()
@@ -161,17 +167,16 @@ final class SecretModel: ObservableObject {
 
     func save(_ session: EditSession, name: String, value: String) async throws {
         let command = session.existingName == nil ? "--add=" : "--set="
-        let output = try await helper.run([command + name, "--expected", session.revision], input: value)
+        let warning = try await helper.save(command + name, revision: session.revision, value: value)
         editor = nil
         await reload()
         if session.existingName == nil { query = name }
         selected = name
-        let status = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .newlines)
-        if status.hasPrefix("Saved.") { error = status }
+        notice = warning
     }
 
     func copyName(_ name: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(name, forType: .string)
+        if !NSPasteboard.general.setString(name, forType: .string) { error = "Couldn’t copy the name." }
     }
 }

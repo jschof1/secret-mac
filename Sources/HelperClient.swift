@@ -6,6 +6,11 @@ struct SecretRecord: Decodable {
     let revision: String
 }
 
+struct SecretListing: Decodable {
+    let names: [String]
+    let skipped: Int
+}
+
 struct HelperFailure: LocalizedError {
     let message: String
     var errorDescription: String? { message }
@@ -34,6 +39,11 @@ private final class PipeDrain: @unchecked Sendable {
 }
 
 struct HelperClient: Sendable {
+    private struct Result: Sendable {
+        let output: Data
+        let message: String?
+    }
+
     let path: String
     let environment: [String: String]
 
@@ -47,6 +57,14 @@ struct HelperClient: Sendable {
     }
 
     func run(_ arguments: [String], input: String? = nil) async throws -> Data {
+        try await execute(arguments, input: input).output
+    }
+
+    func save(_ command: String, revision: String, value: String) async throws -> String? {
+        try await execute([command, "--expected", revision], input: value).message
+    }
+
+    private func execute(_ arguments: [String], input: String?) async throws -> Result {
         if let input, input.utf8.count > 65_536 {
             throw HelperFailure(message: "Use a value of 64 KB or less.")
         }
@@ -55,7 +73,7 @@ struct HelperClient: Sendable {
         }.value
     }
 
-    private func runBlocking(_ arguments: [String], input: String?) throws -> Data {
+    private func runBlocking(_ arguments: [String], input: String?) throws -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
@@ -98,20 +116,21 @@ struct HelperClient: Sendable {
         try? incoming.fileHandleForWriting.close()
         process.waitUntilExit()
         drains.wait()
+        let stderrText = String(data: stderr.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = stderrText.flatMap { $0.hasPrefix("secret: ") ? String($0.dropFirst(8)) : nil }
         guard process.terminationStatus == 0, !stdout.failed, !stderr.failed, !inputFailed else {
-            let message = String(data: stderr.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let message, message.hasPrefix("secret: ") { throw HelperFailure(message: String(message.dropFirst(8))) }
+            if let message { throw HelperFailure(message: message) }
             throw HelperFailure(message: "The secret helper did not finish. Try again.")
         }
-        return stdout.data
+        return Result(output: stdout.data, message: message)
     }
 
-    func names() async throws -> [String] {
-        let data = try await run(["--json"])
-        guard let names = try? JSONDecoder().decode([String].self, from: data) else {
+    func listing() async throws -> SecretListing {
+        let data = try await run(["--status"])
+        guard let listing = try? JSONDecoder().decode(SecretListing.self, from: data) else {
             throw HelperFailure(message: "The secret helper needs updating. Reinstall the app.")
         }
-        return Array(Set(names)).sorted()
+        return listing
     }
 
     func inspect(_ name: String) async throws -> SecretRecord {

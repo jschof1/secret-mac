@@ -2,7 +2,7 @@
 
 The app includes the native `secret` helper. You can use the app without installing a command-line tool.
 
-Run the bundled helper directly:
+Run the bundled helper directly from wherever you installed the app:
 
 ```sh
 /Applications/Secret.app/Contents/Helpers/secret --list
@@ -16,6 +16,8 @@ install -m 755 secret "$HOME/.local/bin/secret"
 ```
 
 No shell startup files are changed automatically.
+
+The source installer places the app in `~/Applications`.
 
 The standalone CLI is also not Developer ID signed or notarised. A browser download may need approval in **System Settings → Privacy & Security → Open Anyway** after the first launch attempt. See [Apple's first-launch guidance](https://support.apple.com/en-gb/102445).
 
